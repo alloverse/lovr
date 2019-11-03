@@ -140,8 +140,8 @@ static ModelData* desktop_newModelData(Device device) {
 static void desktop_renderTo(void (*callback)(void*), void* userdata) {
   uint32_t width, height;
   desktop_getDisplayDimensions(&width, &height);
-  Camera camera = { .canvas = NULL, .viewMatrix = { MAT4_IDENTITY }, .stereo = true };
-  mat4_perspective(camera.projection[0], state.clipNear, state.clipFar, 67.f * (float) M_PI / 180.f, (float) width / 2.f / height);
+  Camera camera = { .canvas = NULL, .viewMatrix = { MAT4_IDENTITY }, .stereo = false };
+  mat4_perspective(camera.projection[0], state.clipNear, state.clipFar, 67.f * (float) M_PI / 180.f, (float) width / height);
   mat4_multiply(camera.viewMatrix[0], state.headTransform);
   mat4_invert(camera.viewMatrix[0]);
   mat4_set(camera.projection[1], camera.projection[0]);
