@@ -133,7 +133,6 @@ if(NOT (EMSCRIPTEN OR ANDROID))
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "")
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "")
-    set(GLFW_USE_CHDIR OFF CACHE BOOL "")
     set(BUILD_SHARED_LIBS ON CACHE BOOL "")
     add_subdirectory(deps/glfw glfw)
     include_directories(deps/glfw/include)
@@ -549,7 +548,7 @@ if(WIN32)
       add_custom_command(TARGET lovr POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:${ARGV0}>
-        ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIGURATION>/$<TARGET_FILE_NAME:${ARGV0}>
+        $<TARGET_FILE_DIR:lovr>/$<TARGET_FILE_NAME:${ARGV0}>
       )
     endif()
   endfunction()
