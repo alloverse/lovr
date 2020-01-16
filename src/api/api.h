@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "core/hash.h"
-#include "util.h"
+#include "core/util.h"
 
 #pragma once
 
@@ -119,9 +119,9 @@ typedef struct {
 #define luax_clearerror(L) lua_pushnil(L), luax_seterror(L)
 
 void _luax_registertype(lua_State* L, const char* name, const luaL_Reg* functions, void (*destructor)(void*));
-void* _luax_totype(lua_State* L, int index, uint32_t hash);
-void* _luax_checktype(lua_State* L, int index, uint32_t hash, const char* debug);
-void _luax_pushtype(lua_State* L, const char* name, uint32_t hash, void* object);
+void* _luax_totype(lua_State* L, int index, uint64_t hash);
+void* _luax_checktype(lua_State* L, int index, uint64_t hash, const char* debug);
+void _luax_pushtype(lua_State* L, const char* name, uint64_t hash, void* object);
 void luax_registerloader(lua_State* L, lua_CFunction loader, int index);
 void luax_vthrow(void* L, const char* format, va_list args);
 void luax_traceback(lua_State* L, lua_State* T, const char* message, int level);
@@ -145,6 +145,10 @@ void luax_checkvariant(lua_State* L, int index, struct Variant* variant);
 int luax_pushvariant(lua_State* L, struct Variant* variant);
 #endif
 
+#ifdef LOVR_ENABLE_FILESYSTEM
+void* luax_readfile(const char* filename, size_t* bytesRead);
+#endif
+
 #ifdef LOVR_ENABLE_GRAPHICS
 struct Attachment;
 struct Texture;
@@ -156,7 +160,6 @@ void luax_readattachments(lua_State* L, int index, struct Attachment* attachment
 
 #ifdef LOVR_ENABLE_MATH
 #include "math/pool.h" // TODO
-#include "math/randomGenerator.h" // TODO
 float* luax_tovector(lua_State* L, int index, VectorType* type);
 float* luax_checkvector(lua_State* L, int index, VectorType type, const char* expected);
 float* luax_newtempvector(lua_State* L, VectorType type);
@@ -164,7 +167,7 @@ int luax_readvec3(lua_State* L, int index, float* v, const char* expected);
 int luax_readscale(lua_State* L, int index, float* v, int components, const char* expected);
 int luax_readquat(lua_State* L, int index, float* q, const char* expected);
 int luax_readmat4(lua_State* L, int index, float* m, int scaleComponents);
-Seed luax_checkrandomseed(lua_State* L, int index);
+uint64_t luax_checkrandomseed(lua_State* L, int index);
 #endif
 
 #ifdef LOVR_ENABLE_PHYSICS

@@ -224,7 +224,7 @@ void lovrGraphicsCreateWindow(WindowFlags* flags) {
   lovrPlatformOnWindowClose(onCloseWindow);
   lovrPlatformOnWindowResize(onResizeWindow);
   lovrPlatformGetFramebufferSize(&state.width, &state.height);
-  lovrGpuInit(lovrGetProcAddress);
+  lovrGpuInit(lovrPlatformGetProcAddress);
 
   state.defaultCanvas = lovrCanvasCreateFromHandle(state.width, state.height, (CanvasFlags) { .stereo = false }, 0, 0, 0, 1, true);
 
@@ -334,12 +334,13 @@ void lovrGraphicsReset() {
   lovrGraphicsSetBlendMode(BLEND_ALPHA, BLEND_ALPHA_MULTIPLY);
   lovrGraphicsSetCanvas(NULL);
   lovrGraphicsSetColor((Color) { 1, 1, 1, 1 });
+  lovrGraphicsSetColorMask(true, true, true, true);
   lovrGraphicsSetCullingEnabled(false);
   lovrGraphicsSetDefaultFilter((TextureFilter) { .mode = FILTER_TRILINEAR });
   lovrGraphicsSetDepthTest(COMPARE_LEQUAL, true);
   lovrGraphicsSetFont(NULL);
-  lovrGraphicsSetLineWidth(1);
-  lovrGraphicsSetPointSize(1);
+  lovrGraphicsSetLineWidth(1.f);
+  lovrGraphicsSetPointSize(1.f);
   lovrGraphicsSetShader(NULL);
   lovrGraphicsSetStencilTest(COMPARE_NONE, 0);
   lovrGraphicsSetWinding(WINDING_COUNTERCLOCKWISE);
@@ -399,6 +400,17 @@ void lovrGraphicsSetColor(Color color) {
   gammaCorrect(&state.linearColor);
 }
 
+void lovrGraphicsGetColorMask(bool* r, bool* g, bool* b, bool* a) {
+  *r = state.pipeline.colorMask & 0x8;
+  *g = state.pipeline.colorMask & 0x4;
+  *b = state.pipeline.colorMask & 0x2;
+  *a = state.pipeline.colorMask & 0x1;
+}
+
+void lovrGraphicsSetColorMask(bool r, bool g, bool b, bool a) {
+  state.pipeline.colorMask = (r << 3) | (g << 2) | (b << 1) | a;
+}
+
 bool lovrGraphicsIsCullingEnabled() {
   return state.pipeline.culling;
 }
@@ -449,7 +461,7 @@ float lovrGraphicsGetLineWidth() {
   return state.pipeline.lineWidth;
 }
 
-void lovrGraphicsSetLineWidth(uint8_t width) {
+void lovrGraphicsSetLineWidth(float width) {
   state.pipeline.lineWidth = width;
 }
 
@@ -559,8 +571,8 @@ static void lovrGraphicsBatch(BatchRequest* req) {
     }
   }
 
-  if (req->type == BATCH_MESH && lovrShaderHasUniform(shader, "lovrPose")) {
-    if (req->params.mesh.pose) {
+  if (lovrShaderHasUniform(shader, "lovrPose")) {
+    if (req->type == BATCH_MESH && req->params.mesh.pose) {
       lovrShaderSetMatrices(shader, "lovrPose", req->params.mesh.pose, 0, MAX_BONES * 16);
     } else {
       lovrShaderSetMatrices(shader, "lovrPose", (float[]) MAT4_IDENTITY, 0, 16);
@@ -1206,6 +1218,10 @@ void lovrGraphicsPrint(const char* str, size_t length, mat4 transform, float wra
   uint32_t glyphCount;
   Font* font = lovrGraphicsGetFont();
   lovrFontMeasure(font, str, length, wrap, &width, &height, &lineCount, &glyphCount);
+
+  if (glyphCount == 0) {
+    return;
+  }
 
   float scale = 1.f / lovrFontGetPixelDensity(font);
   mat4_scale(transform, scale, scale, scale);

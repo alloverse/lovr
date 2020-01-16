@@ -22,7 +22,7 @@ Features
 ---
 
 - **Cross-Platform** - Runs on Windows, Mac, Linux, Android, and even on the web using WebAssembly and WebVR.
-- **Cross-Device** - Supports HTC Vive, Oculus Touch/Go/Quest, Windows MR, and includes a keyboard/mouse VR simulator.
+- **Cross-Device** - Supports Vive/Index, Oculus Rift/Go/Quest, Windows MR, and includes a desktop VR simulator.
 - **Beginner-friendly** - Simple VR scenes can be created in just a few lines of Lua.
 - **Fast** - Writen in C99 and scripted with LuaJIT, includes optimized single-pass stereo rendering.
 - **Asset Import** - Supports 3D models (glTF, OBJ), skeletal animation, HDR textures, cubemaps, fonts, etc.
@@ -101,7 +101,7 @@ Resources
 - [**matrix.org**](https://matrix.to/#/!XVAslexgYDYQnYnZBP:matrix.org): Decentralized alternative to Slack.
 - [**Nightly Builds**](https://lovr.org/download/nightly): Nightly builds for Windows.
 - [**Compiling Guide**](https://lovr.org/docs/Compiling): Information on compiling LÖVR from source.
-- [**Contributing**](CONTRIBUTING.md): Guide for helping out with development 💜
+- [**Contributing**](https://lovr.org/docs/Contributing): Guide for helping out with development 💜
 - [**LÖVE**](https://love2d.org): LÖVR is heavily inspired by LÖVE, a 2D game framework.
 
 Contributors
@@ -111,6 +111,7 @@ Contributors
 - [@shakesoda](https://github.com/shakesoda)
 - [@bcampbell](https://github.com/bcampbell)
 - [@mcclure](https://github.com/mcclure)
+- [@nevyn](https://github.com/nevyn)
 
 License
 ---

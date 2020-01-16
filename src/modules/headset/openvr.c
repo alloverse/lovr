@@ -8,21 +8,14 @@
 #include "graphics/graphics.h"
 #include "graphics/canvas.h"
 #include "core/maf.h"
+#include "core/os.h"
 #include "core/ref.h"
-#include "platform.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#ifndef WIN32
-#pragma pack(push, 4)
-#else
 #undef EXTERN_C
-#endif
 #include <openvr_capi.h>
-#ifndef WIN32
-#pragma pack(pop)
-#endif
 
 // From openvr_capi.h
 extern intptr_t VR_InitInternal(EVRInitError *peError, EVRApplicationType eType);
@@ -96,10 +89,10 @@ static bool openvr_init(float offset, uint32_t msaa) {
   const char* actionManifestLocation = lovrFilesystemGetRealDirectory("actions.json");
   if (!actionManifestLocation || strcmp(actionManifestLocation, lovrFilesystemGetSaveDirectory())) {
     if (
-      lovrFilesystemWrite("actions.json", (const char*) actions_json, actions_json_len, false) != actions_json_len ||
-      lovrFilesystemWrite("bindings_vive.json", (const char*) bindings_vive_json, bindings_vive_json_len, false) != bindings_vive_json_len ||
-      lovrFilesystemWrite("bindings_knuckles.json", (const char*) bindings_knuckles_json, bindings_knuckles_json_len, false) != bindings_knuckles_json_len ||
-      lovrFilesystemWrite("bindings_touch.json", (const char*) bindings_touch_json, bindings_touch_json_len, false) != bindings_touch_json_len
+      lovrFilesystemWrite("actions.json", (const char*) src_resources_actions_json, src_resources_actions_json_len, false) != src_resources_actions_json_len ||
+      lovrFilesystemWrite("bindings_vive.json", (const char*) src_resources_bindings_vive_json, src_resources_bindings_vive_json_len, false) != src_resources_bindings_vive_json_len ||
+      lovrFilesystemWrite("bindings_knuckles.json", (const char*) src_resources_bindings_knuckles_json, src_resources_bindings_knuckles_json_len, false) != src_resources_bindings_knuckles_json_len ||
+      lovrFilesystemWrite("bindings_touch.json", (const char*) src_resources_bindings_touch_json, src_resources_bindings_touch_json_len, false) != src_resources_bindings_touch_json_len
     ) {
       VR_ShutdownInternal();
       return false;
@@ -107,7 +100,7 @@ static bool openvr_init(float offset, uint32_t msaa) {
   }
 
   char path[LOVR_PATH_MAX];
-  snprintf(path, sizeof(path), "%s%cactions.json", lovrFilesystemGetSaveDirectory(), lovrDirSep);
+  snprintf(path, sizeof(path), "%s%cactions.json", lovrFilesystemGetSaveDirectory(), LOVR_PATH_SEP);
   state.input->SetActionManifestPath(path);
   state.input->GetActionSetHandle("/actions/lovr", &state.actionSet);
 

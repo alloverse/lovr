@@ -7,6 +7,7 @@ void luax_pushshape(lua_State* L, Shape* shape) {
     case SHAPE_BOX: luax_pushtype(L, BoxShape, shape); break;
     case SHAPE_CAPSULE: luax_pushtype(L, CapsuleShape, shape); break;
     case SHAPE_CYLINDER: luax_pushtype(L, CylinderShape, shape); break;
+    default: lovrThrow("Unreachable");
   }
 }
 
@@ -60,6 +61,19 @@ static int l_lovrShapeSetEnabled(lua_State* L) {
   Shape* shape = luax_checkshape(L, 1);
   bool enabled = lua_toboolean(L, 2);
   lovrShapeSetEnabled(shape, enabled);
+  return 0;
+}
+
+static int l_lovrShapeIsSensor(lua_State* L) {
+  Shape* shape = luax_checkshape(L, 1);
+  lua_pushboolean(L, lovrShapeIsSensor(shape));
+  return 1;
+}
+
+static int l_lovrShapeSetSensor(lua_State* L) {
+  Shape* shape = luax_checkshape(L, 1);
+  bool sensor = lua_toboolean(L, 2);
+  lovrShapeSetSensor(shape, sensor);
   return 0;
 }
 
@@ -161,6 +175,8 @@ static int l_lovrShapeGetAABB(lua_State* L) {
   { "getCollider", l_lovrShapeGetCollider }, \
   { "isEnabled", l_lovrShapeIsEnabled }, \
   { "setEnabled", l_lovrShapeSetEnabled }, \
+  { "isSensor", l_lovrShapeIsSensor }, \
+  { "setSensor", l_lovrShapeSetSensor }, \
   { "getUserData", l_lovrShapeGetUserData }, \
   { "setUserData", l_lovrShapeSetUserData }, \
   { "getPosition", l_lovrShapeGetPosition }, \

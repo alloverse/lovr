@@ -1,5 +1,5 @@
-#include "util.h"
 #include "core/map.h"
+#include "core/util.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -212,9 +212,11 @@ typedef struct ModelData {
   map_t nodeMap;
 } ModelData;
 
-ModelData* lovrModelDataInit(ModelData* model, struct Blob* blob);
+typedef void* ModelDataIO(const char* filename, size_t* bytesRead);
+
+ModelData* lovrModelDataInit(ModelData* model, struct Blob* blob, ModelDataIO* io);
 #define lovrModelDataCreate(...) lovrModelDataInit(lovrAlloc(ModelData), __VA_ARGS__)
-ModelData* lovrModelDataInitGltf(ModelData* model, struct Blob* blob);
-ModelData* lovrModelDataInitObj(ModelData* model, struct Blob* blob);
+ModelData* lovrModelDataInitGltf(ModelData* model, struct Blob* blob, ModelDataIO* io);
+ModelData* lovrModelDataInitObj(ModelData* model, struct Blob* blob, ModelDataIO* io);
 void lovrModelDataDestroy(void* ref);
 void lovrModelDataAllocate(ModelData* model);

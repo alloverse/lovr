@@ -55,6 +55,7 @@ struct Shape {
   dGeomID id;
   Collider* collider;
   void* userdata;
+  bool sensor;
 };
 
 typedef Shape SphereShape;
@@ -165,6 +166,8 @@ ShapeType lovrShapeGetType(Shape* shape);
 Collider* lovrShapeGetCollider(Shape* shape);
 bool lovrShapeIsEnabled(Shape* shape);
 void lovrShapeSetEnabled(Shape* shape, bool enabled);
+bool lovrShapeIsSensor(Shape* shape);
+void lovrShapeSetSensor(Shape* shape, bool sensor);
 void* lovrShapeGetUserData(Shape* shape);
 void lovrShapeSetUserData(Shape* shape, void* data);
 void lovrShapeGetPosition(Shape* shape, float* x, float* y, float* z);
@@ -208,6 +211,8 @@ JointType lovrJointGetType(Joint* joint);
 void lovrJointGetColliders(Joint* joint, Collider** a, Collider** b);
 void* lovrJointGetUserData(Joint* joint);
 void lovrJointSetUserData(Joint* joint, void* data);
+bool lovrJointIsEnabled(Joint* joint);
+void lovrJointSetEnabled(Joint* joint, bool enable);
 
 BallJoint* lovrBallJointInit(BallJoint* joint, Collider* a, Collider* b, float x, float y, float z);
 #define lovrBallJointCreate(...) lovrBallJointInit(lovrAlloc(BallJoint), __VA_ARGS__)

@@ -1,9 +1,9 @@
 #include "api.h"
-#include "util.h"
 #include "event/event.h"
 #include "thread/thread.h"
-#include "core/platform.h"
+#include "core/os.h"
 #include "core/ref.h"
+#include "core/util.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,7 +65,7 @@ void luax_checkvariant(lua_State* L, int index, Variant* variant) {
       break;
 
     default:
-      lovrThrow("Bad variant type: %s", lua_typename(L, type));
+      lovrThrow("Bad variant type for argument %d: %s", index, lua_typename(L, type));
       return;
   }
 }

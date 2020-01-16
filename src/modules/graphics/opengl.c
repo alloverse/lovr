@@ -66,11 +66,12 @@ static struct {
   bool blendEnabled;
   BlendMode blendMode;
   BlendAlphaMode blendAlphaMode;
+  uint8_t colorMask;
   bool culling;
   bool depthEnabled;
   CompareMode depthTest;
   bool depthWrite;
-  uint8_t lineWidth;
+  float lineWidth;
   uint32_t primitiveRestart;
   bool stencilEnabled;
   CompareMode stencilMode;
@@ -375,6 +376,7 @@ static UniformType getUniformType(GLenum type, const char* debug) {
     case GL_SAMPLER_3D:
     case GL_SAMPLER_CUBE:
     case GL_SAMPLER_2D_ARRAY:
+    case GL_SAMPLER_2D_SHADOW:
       return UNIFORM_SAMPLER;
 #ifdef GL_ARB_shader_image_load_store
     case GL_IMAGE_2D:
@@ -404,6 +406,7 @@ static TextureType getUniformTextureType(GLenum type) {
     case GL_SAMPLER_3D: return TEXTURE_VOLUME;
     case GL_SAMPLER_CUBE: return TEXTURE_CUBE;
     case GL_SAMPLER_2D_ARRAY: return TEXTURE_ARRAY;
+    case GL_SAMPLER_2D_SHADOW: return TEXTURE_2D;
 #ifdef GL_ARB_shader_image_load_store
     case GL_IMAGE_2D: return TEXTURE_2D;
     case GL_IMAGE_3D: return TEXTURE_VOLUME;
@@ -782,6 +785,12 @@ static void lovrGpuBindPipeline(Pipeline* pipeline) {
     }
   }
 
+  // Color mask
+  if (state.colorMask != pipeline->colorMask) {
+    state.colorMask = pipeline->colorMask;
+    glColorMask(state.colorMask & 0x8, state.colorMask & 0x4, state.colorMask & 0x2, state.colorMask & 0x1);
+  }
+
   // Culling
   if (state.culling != pipeline->culling) {
     state.culling = pipeline->culling;
@@ -949,7 +958,7 @@ static void lovrGpuBindShader(Shader* shader) {
         for (int i = 0; i < count; i++) {
           Image* image = &uniform->value.images[i];
           Texture* texture = image->texture;
-          lovrAssert(!texture || texture->type == uniform->textureType, "Uniform texture type mismatch for uniform %s", uniform->name);
+          lovrAssert(!texture || texture->type == uniform->textureType, "Uniform texture type mismatch for uniform '%s'", uniform->name);
 
           // If the Shader can write to the texture, mark it as incoherent
           if (texture && image->access != ACCESS_READ) {
@@ -967,7 +976,8 @@ static void lovrGpuBindShader(Shader* shader) {
       case UNIFORM_SAMPLER:
         for (int i = 0; i < count; i++) {
           Texture* texture = uniform->value.textures[i];
-          lovrAssert(!texture || texture->type == uniform->textureType, "Uniform texture type mismatch for uniform %s", uniform->name);
+          lovrAssert(!texture || texture->type == uniform->textureType, "Uniform texture type mismatch for uniform '%s'", uniform->name);
+          lovrAssert(!texture || (uniform->shadow == (texture->compareMode != COMPARE_NONE)), "Uniform '%s' requires a Texture with%s a compare mode", uniform->name, uniform->shadow ? "" : "out");
           lovrGpuBindTexture(texture, uniform->baseSlot + i);
         }
         break;
@@ -1011,7 +1021,7 @@ static void lovrGpuSetViewports(float* viewport, uint32_t count) {
 
 // GPU
 
-void lovrGpuInit(getProcAddressProc getProcAddress) {
+void lovrGpuInit(void* (*getProcAddress)(const char*)) {
 #ifdef LOVR_GL
   gladLoadGLLoader((GLADloadproc) getProcAddress);
 #elif defined(LOVR_GLES)
@@ -1072,6 +1082,9 @@ void lovrGpuInit(getProcAddressProc getProcAddress) {
   glBlendEquation(GL_FUNC_ADD);
   glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
+  state.colorMask = 0xf;
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
   state.culling = false;
   glDisable(GL_CULL_FACE);
 
@@ -1082,7 +1095,7 @@ void lovrGpuInit(getProcAddressProc getProcAddress) {
   glDepthFunc(convertCompareMode(state.depthTest));
   glDepthMask(state.depthWrite);
 
-  state.lineWidth = 1;
+  state.lineWidth = 1.f;
   glLineWidth(state.lineWidth);
 
   state.stencilEnabled = false;
@@ -1244,8 +1257,6 @@ void lovrGpuPresent() {
 
 void lovrGpuStencil(StencilAction action, int replaceValue, StencilCallback callback, void* userdata) {
   lovrGraphicsFlush();
-  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-
   if (!state.stencilEnabled) {
     state.stencilEnabled = true;
     glEnable(GL_STENCIL_TEST);
@@ -1269,8 +1280,6 @@ void lovrGpuStencil(StencilAction action, int replaceValue, StencilCallback call
   callback(userdata);
   lovrGraphicsFlush();
   state.stencilWriting = false;
-
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   state.stencilMode = ~0; // Dirty
 }
 
@@ -1400,6 +1409,7 @@ Texture* lovrTextureInit(Texture* texture, TextureType type, TextureData** slice
   texture->srgb = srgb;
   texture->mipmaps = mipmaps;
   texture->target = convertTextureTarget(type);
+  texture->compareMode = COMPARE_NONE;
 
   WrapMode wrap = type == TEXTURE_CUBE ? WRAP_CLAMP : WRAP_REPEAT;
   glGenTextures(1, &texture->id);
@@ -1530,7 +1540,7 @@ void lovrTextureReplacePixels(Texture* texture, TextureData* textureData, uint32
   uint32_t height = textureData->height;
   bool overflow = (x + width > maxWidth) || (y + height > maxHeight);
   lovrAssert(!overflow, "Trying to replace pixels outside the texture's bounds");
-  lovrAssert(mipmap >= 0 && mipmap < texture->mipmapCount, "Invalid mipmap level %d", mipmap);
+  lovrAssert(mipmap < texture->mipmapCount, "Invalid mipmap level %d", mipmap);
   GLenum glFormat = convertTextureFormat(textureData->format);
   GLenum glInternalFormat = convertTextureFormatInternal(textureData->format, texture->srgb);
   GLenum binding = (texture->type == TEXTURE_CUBE) ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + slice : texture->target;
@@ -1577,6 +1587,21 @@ void lovrTextureReplacePixels(Texture* texture, TextureData* textureData, uint32
 #else
       glGenerateMipmap(texture->target);
 #endif
+    }
+  }
+}
+
+void lovrTextureSetCompareMode(Texture* texture, CompareMode compareMode) {
+  if (texture->compareMode != compareMode) {
+    lovrGraphicsFlush();
+    lovrGpuBindTexture(texture, 0);
+    texture->compareMode = compareMode;
+    if (compareMode == COMPARE_NONE) {
+      glTexParameteri(texture->target, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+    } else {
+      lovrAssert(isTextureFormatDepth(texture->format), "Only depth textures can set a compare mode");
+      glTexParameteri(texture->target, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+      glTexParameteri(texture->target, GL_TEXTURE_COMPARE_FUNC, convertCompareMode(compareMode));
     }
   }
 }
@@ -1813,7 +1838,8 @@ void* lovrBufferMap(Buffer* buffer, size_t offset) {
   if (!GLAD_GL_ARB_buffer_storage && !buffer->mapped) {
     buffer->mapped = true;
     lovrGpuBindBuffer(buffer->type, buffer->id);
-    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT | (buffer->readable ? GL_MAP_READ_BIT : 0);
+    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT;
+    flags |= buffer->readable ? GL_MAP_READ_BIT : GL_MAP_UNSYNCHRONIZED_BIT;
     buffer->data = glMapBufferRange(convertBufferType(buffer->type), 0, buffer->size, flags);
   }
 #endif
@@ -1862,7 +1888,8 @@ void lovrBufferDiscard(Buffer* buffer) {
     buffer->mapped = false;
   }
 
-  GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | (buffer->readable ? GL_MAP_READ_BIT : 0);
+  GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT;
+  flags |= buffer->readable ? GL_MAP_READ_BIT : (GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
   flags |= GLAD_GL_ARB_buffer_storage ? GL_MAP_PERSISTENT_BIT : 0;
   buffer->data = glMapBufferRange(glType, 0, buffer->size, flags);
 
@@ -2011,12 +2038,14 @@ static void lovrShaderSetupUniforms(Shader* shader) {
         continue;
       } else {
         *subscript = '\0';
+        length = subscript - uniform.name;
       }
     }
 
     uniform.location = glGetUniformLocation(program, uniform.name);
     uniform.type = getUniformType(glType, uniform.name);
     uniform.components = getUniformComponents(glType);
+    uniform.shadow = glType == GL_SAMPLER_2D_SHADOW;
 #ifdef LOVR_WEBGL
     uniform.image = false;
 #else
@@ -2024,6 +2053,7 @@ static void lovrShaderSetupUniforms(Shader* shader) {
 #endif
     uniform.textureType = getUniformTextureType(glType);
     uniform.baseSlot = uniform.type == UNIFORM_SAMPLER ? textureSlot : (uniform.type == UNIFORM_IMAGE ? imageSlot : -1);
+    uniform.dirty = false;
 
     int blockIndex;
     glGetActiveUniformsiv(program, 1, &i, GL_UNIFORM_BLOCK_INDEX, &blockIndex);
