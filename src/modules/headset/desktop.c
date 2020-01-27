@@ -29,7 +29,7 @@ static struct {
 
 static bool desktop_init(float offset, uint32_t msaa) {
   state.offset = offset;
-  state.clipNear = 0.1f;
+  state.clipNear = .1f;
   state.clipFar = 100.f;
 
   if (!state.initialized) {
@@ -113,12 +113,13 @@ static bool desktop_getVelocity(Device device, vec3 velocity, vec3 angularVeloci
   return true;
 }
 
-static bool desktop_isDown(Device device, DeviceButton button, bool* down) {
+static bool desktop_isDown(Device device, DeviceButton button, bool* down, bool* changed) {
   if (device != DEVICE_HAND_LEFT || button != BUTTON_TRIGGER) {
     return false;
   }
 
   *down = lovrPlatformIsMouseDown(MOUSE_RIGHT);
+  *changed = false; // TODO
   return true;
 }
 
@@ -165,9 +166,11 @@ static void desktop_update(float dt) {
   float damping = MAX(1.f - 20.f * dt, 0);
 
   int width, height;
-  double mx, my, aspect = 1;
+  double mx, my;
   lovrPlatformGetWindowSize(&width, &height);
   lovrPlatformGetMousePosition(&mx, &my);
+
+  double aspect = (width > 0 && height > 0) ? ((double) width / height) : 1.;
 
   // Mouse move
   if (lovrPlatformIsMouseDown(MOUSE_LEFT)) {
@@ -178,7 +181,6 @@ static void desktop_update(float dt) {
       state.prevCursorY = my;
     }
 
-    float aspect = (float) width / height;
     float dx = (float) (mx - state.prevCursorX) / ((float) width);
     float dy = (float) (my - state.prevCursorY) / ((float) height * aspect);
     state.angularVelocity[0] = dy / dt;
@@ -218,17 +220,16 @@ static void desktop_update(float dt) {
   double px = mx, py = my;
   if (width > 0 && height > 0) {
     // change coordinate system to -1.0 to 1.0
-    px = (px / width)*2 - 1.0;
-    py = (py / height)*2 - 1.0;
-    aspect = height/(double)width;
+    px = (px / width) * 2 - 1.0;
+    py = (py / height) * 2 - 1.0;
 
-    px +=  0.2; // neutral position = pointing towards center-ish
-    px *= 0.6; // fudged range to juuust cover pointing at the whole scene, but not outside it
+    px +=  .2; // neutral position = pointing towards center-ish
+    px *= .6; // fudged range to juuust cover pointing at the whole scene, but not outside it
   }
 
   mat4_set(state.leftHandTransform, state.headTransform);
-  double xrange = M_PI*0.2;
-  double yrange = xrange * aspect;
+  double xrange = M_PI * .2;
+  double yrange = xrange / aspect;
   mat4_translate(state.leftHandTransform, -.1f, -.1f, -0.10f);
   mat4_rotate(state.leftHandTransform, -px * xrange, 0, 1, 0);
   mat4_rotate(state.leftHandTransform, -py * yrange, 1, 0, 0);

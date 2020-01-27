@@ -207,6 +207,10 @@ static void openvr_getDisplayDimensions(uint32_t* width, uint32_t* height) {
   state.system->GetRecommendedRenderTargetSize(width, height);
 }
 
+static float openvr_getDisplayFrequency() {
+  return state.system->GetFloatTrackedDeviceProperty(HEADSET, ETrackedDeviceProperty_Prop_DisplayFrequency_Float, NULL);
+}
+
 static const float* openvr_getDisplayMask(uint32_t* count) {
   struct HiddenAreaMesh_t hiddenAreaMesh = state.system->GetHiddenAreaMesh(EVREye_Eye_Left, EHiddenAreaMeshType_k_eHiddenAreaMesh_Standard);
 
@@ -231,7 +235,7 @@ static double openvr_getDisplayTime(void) {
   float secondsSinceVsync;
   state.system->GetTimeSinceLastVsync(&secondsSinceVsync, NULL);
 
-  float frequency = state.system->GetFloatTrackedDeviceProperty(HEADSET, ETrackedDeviceProperty_Prop_DisplayFrequency_Float, NULL);
+  float frequency = openvr_getDisplayFrequency();
   float frameDuration = 1.f / frequency;
   float vsyncToPhotons = state.system->GetFloatTrackedDeviceProperty(HEADSET, ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float, NULL);
 
@@ -307,23 +311,27 @@ static bool openvr_getVelocity(Device device, vec3 velocity, vec3 angularVelocit
   return pose->bPoseIsValid;
 }
 
-static bool getButtonState(Device device, DeviceButton button, VRActionHandle_t actions[2][MAX_BUTTONS], bool* value) {
+static bool openvr_isDown(Device device, DeviceButton button, bool* down, bool* changed) {
   if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT) {
     return false;
   }
 
   InputDigitalActionData_t actionData;
-  state.input->GetDigitalActionData(actions[device - DEVICE_HAND_LEFT][button], &actionData, sizeof(actionData), 0);
-  *value = actionData.bState;
+  state.input->GetDigitalActionData(state.buttonActions[device - DEVICE_HAND_LEFT][button], &actionData, sizeof(actionData), 0);
+  *down = actionData.bState;
+  *changed = actionData.bChanged;
   return actionData.bActive;
 }
 
-static bool openvr_isDown(Device device, DeviceButton button, bool* down) {
-  return getButtonState(device, button, state.buttonActions, down);
-}
-
 static bool openvr_isTouched(Device device, DeviceButton button, bool* touched) {
-  return getButtonState(device, button, state.touchActions, touched);
+  if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT) {
+    return false;
+  }
+
+  InputDigitalActionData_t actionData;
+  state.input->GetDigitalActionData(state.touchActions[device - DEVICE_HAND_LEFT][button], &actionData, sizeof(actionData), 0);
+  *touched = actionData.bState;
+  return actionData.bActive;
 }
 
 static bool openvr_getAxis(Device device, DeviceAxis axis, vec3 value) {
@@ -426,7 +434,7 @@ static ModelData* openvr_newModelData(Device device) {
 
   RenderModel_TextureMap_t* vrTexture = state.deviceTextures[index];
   model->textures[0] = lovrTextureDataCreate(vrTexture->unWidth, vrTexture->unHeight, 0, FORMAT_RGBA);
-  memcpy(model->textures[0]->blob.data, vrTexture->rubTextureMapData, vrTexture->unWidth * vrTexture->unHeight * 4);
+  memcpy(model->textures[0]->blob->data, vrTexture->rubTextureMapData, vrTexture->unWidth * vrTexture->unHeight * 4);
 
   model->materials[0] = (ModelMaterial) {
     .colors[COLOR_DIFFUSE] = { 1.f, 1.f, 1.f, 1.f },
@@ -529,6 +537,7 @@ HeadsetInterface lovrHeadsetOpenVRDriver = {
   .getName = openvr_getName,
   .getOriginType = openvr_getOriginType,
   .getDisplayDimensions = openvr_getDisplayDimensions,
+  .getDisplayFrequency = openvr_getDisplayFrequency,
   .getDisplayMask = openvr_getDisplayMask,
   .getDisplayTime = openvr_getDisplayTime,
   .getClipDistance = openvr_getClipDistance,
