@@ -4,9 +4,11 @@ include_rules
 SRC += src/main.c
 SRC += src/core/arr.c
 SRC += src/core/fs.c
+SRC_@(GPU) += src/core/gpu_@(GPU_BACKEND).c
 SRC += src/core/maf.c
 SRC += src/core/map.c
 SRC += src/core/os_$(PLATFORM).c
+SRC += src/core/png.c
 SRC += src/core/ref.c
 SRC += src/core/utf.c
 SRC += src/core/util.c

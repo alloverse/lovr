@@ -18,6 +18,7 @@
 
 static struct {
   BridgeLovrDimensions displayDimensions;
+  float displayFrequency;
   BridgeLovrDevice deviceType;
   BridgeLovrVibrateFunction* vibrateFunction;
   BridgeLovrUpdateData updateData;
@@ -31,12 +32,14 @@ static struct {
 static struct {
   void (*renderCallback)(void*);
   void* renderUserdata;
+  uint32_t msaa;
   float offset;
 } state;
 
 // Headset driver object
 
 static bool vrapi_init(float offset, uint32_t msaa) {
+  state.msaa = msaa;
   state.offset = offset;
   return true;
 }
@@ -63,18 +66,40 @@ static HeadsetOrigin vrapi_getOriginType() {
   return ORIGIN_HEAD;
 }
 
-static double vrapi_getDisplayTime(void) {
-  return bridgeLovrMobileData.updateData.displayTime;
-}
-
 static void vrapi_getDisplayDimensions(uint32_t* width, uint32_t* height) {
   *width = bridgeLovrMobileData.displayDimensions.width;
   *height = bridgeLovrMobileData.displayDimensions.height;
 }
 
+static float vrapi_getDisplayFrequency(void) {
+  return bridgeLovrMobileData.displayFrequency;
+}
+
 static const float* vrapi_getDisplayMask(uint32_t* count) {
   *count = 0;
   return NULL;
+}
+
+static double vrapi_getDisplayTime(void) {
+  return bridgeLovrMobileData.updateData.displayTime;
+}
+
+static uint32_t vrapi_getViewCount(void) {
+  return 2;
+}
+
+static bool vrapi_getViewPose(uint32_t view, float* position, float* orientation) {
+  if (view > 1) return false;
+  float transform[16];
+  mat4_init(transform, bridgeLovrMobileData.updateData.eyeViewMatrix[view]);
+  mat4_invert(transform); // :(
+  mat4_getPosition(transform, position);
+  mat4_getOrientation(transform, orientation);
+  return true;
+}
+
+static bool vrapi_getViewAngles(uint32_t view, float* left, float* right, float* up, float* down) {
+  return false; // TODO decompose projection matrix into fov angles
 }
 
 static void vrapi_getClipDistance(float* clipNear, float* clipFar) {
@@ -86,8 +111,8 @@ static void vrapi_setClipDistance(float clipNear, float clipFar) {
 }
 
 static void vrapi_getBoundsDimensions(float* width, float* depth) {
-  *width = 0.f;
-  *depth = 0.f;
+  *width = bridgeLovrMobileData.updateData.boundsWidth;
+  *depth = bridgeLovrMobileData.updateData.boundsDepth;
 }
 
 static const float* vrapi_getBoundsGeometry(uint32_t* count) {
@@ -186,7 +211,7 @@ static bool vrapi_isDown(Device device, DeviceButton button, bool* down, bool* c
   if (idx < 0)
     return false;
 
-  *changed = false; // TODO
+  buttonDown(bridgeLovrMobileData.updateData.controllers[idx].buttonChanged, button, changed);
   return buttonDown(bridgeLovrMobileData.updateData.controllers[idx].buttonDown, button, down);
 }
 
@@ -261,9 +286,13 @@ HeadsetInterface lovrHeadsetOculusMobileDriver = {
   .destroy = vrapi_destroy,
   .getName = vrapi_getName,
   .getOriginType = vrapi_getOriginType,
-  .getDisplayTime = vrapi_getDisplayTime,
   .getDisplayDimensions = vrapi_getDisplayDimensions,
+  .getDisplayFrequency = vrapi_getDisplayFrequency,
   .getDisplayMask = vrapi_getDisplayMask,
+  .getDisplayTime = vrapi_getDisplayTime,
+  .getViewCount = vrapi_getViewCount,
+  .getViewPose = vrapi_getViewPose,
+  .getViewAngles = vrapi_getViewAngles,
   .getClipDistance = vrapi_getClipDistance,
   .setClipDistance = vrapi_setClipDistance,
   .getBoundsDimensions = vrapi_getBoundsDimensions,
@@ -440,6 +469,7 @@ void bridgeLovrInit(BridgeLovrInitData *initData) {
 
   // Unpack init data
   bridgeLovrMobileData.displayDimensions = initData->suggestedEyeTexture;
+  bridgeLovrMobileData.displayFrequency = initData->displayFrequency;
   bridgeLovrMobileData.updateData.displayTime = initData->zeroDisplayTime;
   bridgeLovrMobileData.deviceType = initData->deviceType;
   bridgeLovrMobileData.vibrateFunction = initData->vibrateFunction;
@@ -508,7 +538,7 @@ void bridgeLovrDraw(BridgeLovrDrawData *drawData) {
         .depth.enabled = true,
         .depth.readable = false,
         .depth.format = FORMAT_D24S8,
-        .msaa = 4,
+        .msaa = state.msaa,
         .stereo = true,
         .mipmaps = false
       });

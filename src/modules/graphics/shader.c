@@ -61,14 +61,14 @@ static const char* getUniformTypeName(const Uniform* uniform) {
   return "";
 }
 
-Shader* lovrShaderInitDefault(Shader* shader, DefaultShader type, ShaderFlag* flags, uint32_t flagCount) {
+Shader* lovrShaderInitDefault(Shader* shader, DefaultShader type, ShaderFlag* flags, uint32_t flagCount, bool multiview) {
   switch (type) {
-    case SHADER_UNLIT: return lovrShaderInitGraphics(shader, NULL, NULL, flags, flagCount, true);
-    case SHADER_STANDARD: return lovrShaderInitGraphics(shader, lovrStandardVertexShader, lovrStandardFragmentShader, flags, flagCount, true);
-    case SHADER_CUBE: return lovrShaderInitGraphics(shader, lovrCubeVertexShader, lovrCubeFragmentShader, flags, flagCount, true);
-    case SHADER_PANO: return lovrShaderInitGraphics(shader, lovrCubeVertexShader, lovrPanoFragmentShader, flags, flagCount, true);
-    case SHADER_FONT: return lovrShaderInitGraphics(shader, NULL, lovrFontFragmentShader, flags, flagCount, true);
-    case SHADER_FILL: return lovrShaderInitGraphics(shader, lovrFillVertexShader, NULL, flags, flagCount, true);
+    case SHADER_UNLIT: return lovrShaderInitGraphics(shader, NULL, -1, NULL, -1, flags, flagCount, multiview);
+    case SHADER_STANDARD: return lovrShaderInitGraphics(shader, lovrStandardVertexShader, -1, lovrStandardFragmentShader, -1, flags, flagCount, multiview);
+    case SHADER_CUBE: return lovrShaderInitGraphics(shader, lovrCubeVertexShader, -1, lovrCubeFragmentShader, -1, flags, flagCount, multiview);
+    case SHADER_PANO: return lovrShaderInitGraphics(shader, lovrCubeVertexShader, -1, lovrPanoFragmentShader, -1, flags, flagCount, multiview);
+    case SHADER_FONT: return lovrShaderInitGraphics(shader, NULL, -1, lovrFontFragmentShader, -1, flags, flagCount, multiview);
+    case SHADER_FILL: return lovrShaderInitGraphics(shader, lovrFillVertexShader, -1, NULL, -1, flags, flagCount, multiview);
     default: lovrThrow("Unknown default shader type"); return NULL;
   }
 }
@@ -84,6 +84,10 @@ int lovrShaderGetAttributeLocation(Shader* shader, const char* name) {
 
 bool lovrShaderHasUniform(Shader* shader, const char* name) {
   return map_get(&shader->uniformMap, hash64(name, strlen(name))) != MAP_NIL;
+}
+
+bool lovrShaderHasBlock(Shader* shader, const char* name) {
+  return map_get(&shader->blockMap, hash64(name, strlen(name))) != MAP_NIL;
 }
 
 const Uniform* lovrShaderGetUniform(Shader* shader, const char* name) {
