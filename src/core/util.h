@@ -9,7 +9,13 @@
 #define LOVR_VERSION_ALIAS "Very Velociraptor"
 
 #ifdef _WIN32
-#define LOVR_EXPORT __declspec(dllexport)
+ #if defined(LOVR_BUILDING_SHARED)
+  #define LOVR_EXPORT __declspec(dllexport)
+ #elif defined(LOVR_BUILDING_EXE)
+  #define LOVR_EXPORT
+ #else
+  #define LOVR_EXPORT __declspec(dllimport)
+ #endif
 #define LOVR_NORETURN  __declspec(noreturn)
 #define LOVR_THREAD_LOCAL  __declspec(thread)
 #define LOVR_ALIGN(n) __declspec(align(n))

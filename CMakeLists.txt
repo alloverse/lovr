@@ -331,8 +331,10 @@ set(LOVR_SRC
 )
 
 if(LOVR_BUILD_SHARED)
+  add_definitions(-DLOVR_BUILDING_SHARED)
   add_library(lovr SHARED ${LOVR_SRC})
 elseif(LOVR_BUILD_EXE)
+  add_definitions(-DLOVR_BUILDING_EXE)
   add_executable(lovr ${LOVR_SRC})
 else()
   return()
