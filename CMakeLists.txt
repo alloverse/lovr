@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.1.0)
 cmake_policy(SET CMP0063 NEW)
+cmake_policy(SET CMP0042 NEW)
 project(lovr)
 
 # Options
@@ -596,6 +597,7 @@ elseif(APPLE)
       MACOSX_BUNDLE TRUE
       MACOSX_RPATH TRUE
       BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_NAME_DIR "@rpath"
       INSTALL_RPATH "@executable_path"
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/Info.plist"
       RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/lovr.icns"
