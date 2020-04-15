@@ -76,6 +76,12 @@ elseif(ANDROID)
     set(LOVR_USE_OCULUS_MOBILE ON)
   endif()
   set(LOVR_BUILD_SHARED ON) # Android has only "activities"
+
+  find_package(Java 1.8 REQUIRED)
+  include(UseJava)
+  include("Android.cmake")
+  set(ANDROID_GLUE "${ANDROID_NDK}/sources/android/native_app_glue")
+  set(ANDROID_BUILD_TOOLS "${ANDROID_SDK}/build-tools/${ANDROID_BUILD_TOOLS_VERSION}")
 elseif(UNIX)
   find_package(PkgConfig)
   if(NOT APPLE)
@@ -460,6 +466,9 @@ if(LOVR_ENABLE_HEADSET)
   endif()
   if(LOVR_USE_OCULUS_MOBILE)
     add_definitions(-DLOVR_USE_OCULUS_MOBILE)
+    link_directories("deps/ovr_sdk_mobile/VrApi/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}")
+    include_directories("deps/ovr_sdk_mobile/VrApi/Include")
+    target_link_libraries(lovr vrapi)
     target_sources(lovr PRIVATE src/modules/headset/oculus_mobile.c)
   endif()
   if(LOVR_USE_PICO)
@@ -605,9 +614,28 @@ elseif(EMSCRIPTEN)
   target_sources(lovr PRIVATE src/core/os_web.c)
   target_compile_definitions(lovr PRIVATE -DLOVR_WEBGL)
 elseif(ANDROID)
-  target_sources(lovr PRIVATE src/core/os_android.c)
-  target_link_libraries(lovr log EGL GLESv3)
+  get_filename_component(ANDROID_SDK "${ANDROID_NDK}/.." ABSOLUTE)
+  file(TO_CMAKE_PATH "${ANDROID_SDK}" ANDROID_SDK)
+  include_directories("${ANDROID_GLUE}" )
+
+  target_sources(lovr PRIVATE src/core/os_android.c "${ANDROID_GLUE}/android_native_app_glue.c")
+  target_link_libraries(lovr log EGL GLESv3 android)
   target_compile_definitions(lovr PRIVATE -DLOVR_GLES)
+
+  add_apk(lovrapp
+    SOURCES
+        "org/lovr/oculusmobile/MainActivity.java"
+    MANIFEST 
+        "${CMAKE_CURRENT_SOURCE_DIR}/AndroidManifest.xml"
+    RESOURCES
+        $<TARGET_FILE:lovr>
+        "${CMAKE_CURRENT_SOURCE_DIR}/deps/ovr_sdk_mobile/VrApi/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libvrapi.so"
+    INCLUDE_JARS 
+        "${ANDROID_SDK}/platforms/android-${ANDROID_PLATFORM}/android.jar"
+    KEYSTORE ${KEYSTORE}
+    KEYSTORE_PASS ${KEYSTORE_PASS}
+    KEY_PASS ${KEY_PASS}
+  )
 elseif(UNIX)
   target_sources(lovr PRIVATE src/core/os_linux.c)
   target_compile_definitions(lovr PRIVATE -DLOVR_GL)

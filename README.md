@@ -78,7 +78,7 @@ end
 
 You can try more examples in your browser on the [docs page](https://lovr.org/docs/Hello_World).
 
-Building
+Building for Mac and Windows
 ---
 
 You can build LÖVR from source using CMake.  Here are the steps using the command line:
@@ -91,6 +91,39 @@ cmake --build .
 ```
 
 See the [Compiling Guide](https://lovr.org/docs/Compiling) for more info.
+
+Building for Oculus Quest and Pico Neo
+---
+
+Building for standalone Android platforms is a bit more involved. You'll need:
+
+* Android Studio
+* Xcode if on a Mac
+* mingw bash, make and clang if on Windows
+
+Your CMake invocation will then need to configure the build to match your Java and Android
+environment, like so:
+
+```
+mkdir build
+cd build
+cmake \
+    -DCMAKE_TOOLCHAIN_FILE=$HOME/AppData/Local/Android/Sdk/ndk-bundle/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=29 -DANDROID_BUILD_TOOLS_VERSION=29.0.0 \
+    -DJAVA_HOME="C:/Program Files/Android/Android Studio/jre" \
+    -DKEYSTORE=~/.key \
+    -DKEYSTORE_PASS=pass:1234 \
+    -DKEY_PASS=pass:1234 \
+    -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" ..`
+cmake --build .
+```
+
+On Mac, substitute that `-DCMAKE_TOOLCHAIN_FILE` setting
+with `$HOME/Library/Android/Sdk/ndk-bundle/build/cmake/android.toolchain.cmake`, and remove
+`-DJAVA_HOME`.
+
+Note that you'll need to generate an Android keystore file and feed that into the KEY options.
+
 
 Resources
 ---

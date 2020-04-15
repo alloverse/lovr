@@ -25,3 +25,6 @@
 [submodule "deps/pico"]
 	path = deps/pico
 	url = https://github.com/alloverse/pico_native_sdk.git
+[submodule "deps/ovr_sdk_mobile"]
+	path = deps/ovr_sdk_mobile
+	url = https://github.com/alloverse/ovr_sdk_mobile.git
