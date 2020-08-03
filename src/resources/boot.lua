@@ -52,7 +52,7 @@ local function nogame()
       for i, hand in ipairs(lovr.headset.getHands()) do
         models[hand] = models[hand] or lovr.headset.newModel(hand)
         if models[hand] then
-          local x, y, z, angle ax, ay, az = lovr.headset.getPose(hand)
+          local x, y, z, angle, ax, ay, az = lovr.headset.getPose(hand)
           models[hand]:draw(x, y, z, 1.0, angle, ax, ay, az)
         end
       end
@@ -83,6 +83,7 @@ function lovr.boot()
   local conf = {
     version = '0.13.0',
     identity = 'default',
+    saveprecedence = true,
     hotkeys = true,
     modules = {
       audio = true,
@@ -95,8 +96,11 @@ function lovr.boot()
       thread = true,
       timer = true
     },
+    graphics = {
+      debug = false
+    },
     headset = {
-      drivers = { 'leap', 'openxr', 'oculus', 'oculusmobile', 'openvr', 'webvr', 'desktop' },
+      drivers = { 'leap', 'openxr', 'oculus', 'vrapi', 'pico', 'openvr', 'webxr', 'webvr', 'desktop' },
       offset = 1.7,
       msaa = 4
     },
@@ -124,7 +128,7 @@ function lovr.boot()
   if confOk and lovr.conf then confOk, confError = pcall(lovr.conf, conf) end
 
   lovr._setConf(conf)
-  lovr.filesystem.setIdentity(conf.identity)
+  lovr.filesystem.setIdentity(conf.identity, conf.saveprecedence)
 
   for module in pairs(conf.modules) do
     if conf.modules[module] then
@@ -149,7 +153,10 @@ function lovr.run()
   return function()
     lovr.event.pump()
     for name, a, b, c, d in lovr.event.poll() do
-      if name == 'quit' and (not lovr.quit or not lovr.quit()) then
+      if name == 'restart' then
+        local cookie = lovr.restart and lovr.restart()
+        return 'restart', cookie
+      elseif name == 'quit' and (not lovr.quit or not lovr.quit(a)) then
         return a or 0
       end
       if lovr.handlers[name] then lovr.handlers[name](a, b, c, d) end
@@ -244,6 +251,11 @@ function lovr.threaderror(thread, err)
   error('Thread error\n\n' .. err, 0)
 end
 
+function lovr.log(message, level, tag)
+  message = message:gsub('\n$', '')
+  print(message)
+end
+
 -- This splits up the string returned by luax_getstack so it looks like the error message plus the string from
 -- debug.traceback(). This includes splitting on the newline before 'stack traceback:' and appending a newline
 local function splitOnLabelLine(s, t)
@@ -284,8 +296,8 @@ return function()
       return 1
     end
 
-    local ok, result = xpcall(continuation, onerror)
-    if result and ok then return result -- Result is value returned by function. Return it.
+    local ok, result, extra = xpcall(continuation, onerror)
+    if result and ok then return result, extra -- Result is value returned by function. Return it.
     elseif not ok then continuation = result end -- Result is value returned by error handler. Make it the new error handler.
 
     local externerror = coroutine.yield() -- Return control to C code

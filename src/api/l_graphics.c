@@ -111,7 +111,6 @@ StringEntry FilterModes[] = {
   [FILTER_NEAREST] = ENTRY("nearest"),
   [FILTER_BILINEAR] = ENTRY("bilinear"),
   [FILTER_TRILINEAR] = ENTRY("trilinear"),
-  [FILTER_ANISOTROPIC] = ENTRY("anisotropic"),
   { 0 }
 };
 
@@ -164,6 +163,9 @@ StringEntry TextureFormats[] = {
   [FORMAT_RGB] = ENTRY("rgb"),
   [FORMAT_RGBA] = ENTRY("rgba"),
   [FORMAT_RGBA4] = ENTRY("rgba4"),
+  [FORMAT_R16] = ENTRY("r16"),
+  [FORMAT_RG16] = ENTRY("rg16"),
+  [FORMAT_RGBA16] = ENTRY("rgba16"),
   [FORMAT_RGBA16F] = ENTRY("rgba16f"),
   [FORMAT_RGBA32F] = ENTRY("rgba32f"),
   [FORMAT_R16F] = ENTRY("r16f"),
@@ -586,11 +588,8 @@ static int l_lovrGraphicsSetCullingEnabled(lua_State* L) {
 static int l_lovrGraphicsGetDefaultFilter(lua_State* L) {
   TextureFilter filter = lovrGraphicsGetDefaultFilter();
   luax_pushenum(L, FilterModes, filter.mode);
-  if (filter.mode == FILTER_ANISOTROPIC) {
-    lua_pushnumber(L, filter.anisotropy);
-    return 2;
-  }
-  return 1;
+  lua_pushnumber(L, filter.anisotropy);
+  return 2;
 }
 
 static int l_lovrGraphicsSetDefaultFilter(lua_State* L) {
@@ -1291,8 +1290,7 @@ static int l_lovrGraphicsNewMesh(lua_State* L) {
     .buffer = lovrGraphicsGetIdentityBuffer(),
     .type = U8,
     .components = 1,
-    .divisor = 1,
-    .integer = true
+    .divisor = 1
   });
 
   if (dataIndex) {
@@ -1355,7 +1353,7 @@ static int l_lovrGraphicsNewModel(lua_State* L) {
   return 1;
 }
 
-static const char* luax_checkshadersource(lua_State* L, int index, int *outLength) {
+static const char* luax_readshadersource(lua_State* L, int index, int *outLength) {
   if (lua_isnoneornil(L, index)) {
     return NULL;
   }
@@ -1447,9 +1445,9 @@ static int l_lovrGraphicsNewShader(lua_State* L) {
     }
   } else {
     int vertexSourceLength;
-    const char* vertexSource = luax_checkshadersource(L, 1, &vertexSourceLength);
+    const char* vertexSource = luax_readshadersource(L, 1, &vertexSourceLength);
     int fragmentSourceLength;
-    const char* fragmentSource = luax_checkshadersource(L, 2, &fragmentSourceLength);
+    const char* fragmentSource = luax_readshadersource(L, 2, &fragmentSourceLength);
 
     if (lua_istable(L, 3)) {
       lua_getfield(L, 3, "flags");
@@ -1473,7 +1471,8 @@ static int l_lovrGraphicsNewShader(lua_State* L) {
 
 static int l_lovrGraphicsNewComputeShader(lua_State* L) {
   int sourceLength;
-  const char* source = luax_checkshadersource(L, 1, &sourceLength);
+  const char* source = luax_readshadersource(L, 1, &sourceLength);
+  luaL_argcheck(L, source, 1, "string or Blob expected");
   ShaderFlag flags[MAX_SHADER_FLAGS];
   uint32_t flagCount = 0;
 
@@ -1742,9 +1741,20 @@ int luaopen_lovr_graphics(lua_State* L) {
   luax_registertype(L, Shader);
   luax_registertype(L, ShaderBlock);
   luax_registertype(L, Texture);
-  lovrGraphicsInit();
 
   luax_pushconf(L);
+
+  bool debug = false;
+  lua_getfield(L, -1, "graphics");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "debug");
+    debug = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  lovrGraphicsInit(debug);
+
   lua_pushcfunction(L, l_lovrGraphicsCreateWindow);
   lua_getfield(L, -2, "window");
   lua_call(L, 1, 0);

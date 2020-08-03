@@ -8,18 +8,16 @@
 #include "core/ref.h"
 #include <stdlib.h>
 
-#if defined(EMSCRIPTEN) || defined(LOVR_USE_OCULUS_MOBILE)
-#define LOVR_HEADSET_HELPER_USES_REGISTRY
-#endif
-
 StringEntry HeadsetDrivers[] = {
   [DRIVER_DESKTOP] = ENTRY("desktop"),
   [DRIVER_LEAP_MOTION] = ENTRY("leap"),
   [DRIVER_OCULUS] = ENTRY("oculus"),
-  [DRIVER_OCULUS_MOBILE] = ENTRY("oculusmobile"),
   [DRIVER_OPENVR] = ENTRY("openvr"),
   [DRIVER_OPENXR] = ENTRY("openxr"),
+  [DRIVER_VRAPI] = ENTRY("vrapi"),
+  [DRIVER_PICO] = ENTRY("pico"),
   [DRIVER_WEBVR] = ENTRY("webvr"),
+  [DRIVER_WEBXR] = ENTRY("webxr"),
   { 0 }
 };
 
@@ -47,6 +45,10 @@ StringEntry Devices[] = {
   [DEVICE_HAND_RIGHT_FINGER_MIDDLE] = ENTRY("hand/right/finger/middle"),
   [DEVICE_HAND_RIGHT_FINGER_RING] = ENTRY("hand/right/finger/ring"),
   [DEVICE_HAND_RIGHT_FINGER_PINKY] = ENTRY("hand/right/finger/pinky"),
+  [DEVICE_BEACON_1] = ENTRY("beacon/1"),
+  [DEVICE_BEACON_2] = ENTRY("beacon/2"),
+  [DEVICE_BEACON_3] = ENTRY("beacon/3"),
+  [DEVICE_BEACON_4] = ENTRY("beacon/4"),
   { 0 }
 };
 
@@ -85,7 +87,7 @@ static HeadsetRenderData headsetRenderData;
 static void renderHelper(void* userdata) {
   HeadsetRenderData* renderData = userdata;
   lua_State* L = renderData->L;
-#ifdef LOVR_HEADSET_HELPER_USES_REGISTRY
+#if defined(EMSCRIPTEN) || defined(LOVR_USE_PICO)
   luax_geterror(L);
   if (lua_isnil(L, -1)) {
     lua_pushcfunction(L, luax_getstack);
@@ -577,7 +579,7 @@ static int l_lovrHeadsetRenderTo(lua_State* L) {
   lua_settop(L, 1);
   luaL_checktype(L, 1, LUA_TFUNCTION);
 
-#ifdef LOVR_HEADSET_HELPER_USES_REGISTRY
+#if defined(EMSCRIPTEN) || defined(LOVR_USE_PICO)
   if (headsetRenderData.ref != LUA_NOREF) {
     luaL_unref(L, LUA_REGISTRYINDEX, headsetRenderData.ref);
   }
@@ -694,7 +696,7 @@ int luaopen_lovr_headset(lua_State* L) {
   lua_getfield(L, -1, "headset");
 
   size_t driverCount = 0;
-  HeadsetDriver drivers[8];
+  HeadsetDriver drivers[16];
   float offset = 1.7f;
   int msaa = 4;
 

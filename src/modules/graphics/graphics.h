@@ -92,7 +92,7 @@ typedef struct {
 } Pipeline;
 
 // Base
-bool lovrGraphicsInit(void);
+bool lovrGraphicsInit(bool debug);
 void lovrGraphicsDestroy(void);
 void lovrGraphicsPresent(void);
 void lovrGraphicsCreateWindow(WindowFlags* flags);
@@ -219,7 +219,7 @@ typedef struct {
   uint32_t instances;
 } DrawCommand;
 
-void lovrGpuInit(void* (*getProcAddress)(const char*));
+void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug);
 void lovrGpuDestroy(void);
 void lovrGpuClear(struct Canvas* canvas, Color* color, float* depth, int* stencil);
 void lovrGpuCompute(struct Shader* shader, int x, int y, int z);
@@ -228,6 +228,7 @@ void lovrGpuDraw(DrawCommand* draw);
 void lovrGpuStencil(StencilAction action, int replaceValue, StencilCallback callback, void* userdata);
 void lovrGpuPresent(void);
 void lovrGpuDirtyTexture(void);
+void lovrGpuResetState(void);
 void lovrGpuTick(const char* label);
 double lovrGpuTock(const char* label);
 const GpuFeatures* lovrGpuGetFeatures(void);

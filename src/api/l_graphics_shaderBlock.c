@@ -19,8 +19,9 @@ static int l_lovrShaderBlockGetSize(lua_State* L) {
 
 static int l_lovrShaderBlockGetOffset(lua_State* L) {
   ShaderBlock* block = luax_checktype(L, 1, ShaderBlock);
-  const char* field = luaL_checkstring(L, 2);
-  const Uniform* uniform = lovrShaderBlockGetUniform(block, field);
+  const char* name = luaL_checkstring(L, 2);
+  const Uniform* uniform = lovrShaderBlockGetUniform(block, name);
+  lovrAssert(uniform, "Unknown uniform for ShaderBlock '%s'", name);
   lua_pushinteger(L, uniform->offset);
   return 1;
 }
@@ -37,7 +38,7 @@ static int l_lovrShaderBlockSend(lua_State* L) {
     lovrBufferFlush(buffer, uniform->offset, uniform->size);
     return 0;
   } else {
-    Blob* blob = luax_checktype(L, 1, Blob);
+    Blob* blob = luax_checktype(L, 2, Blob);
     Buffer* buffer = lovrShaderBlockGetBuffer(block);
     void* data = lovrBufferMap(buffer, 0);
     size_t bufferSize = lovrBufferGetSize(buffer);
@@ -102,8 +103,9 @@ static int l_lovrShaderBlockRead(lua_State* L) {
 static int l_lovrShaderBlockGetShaderCode(lua_State* L) {
   ShaderBlock* block = luax_checktype(L, 1, ShaderBlock);
   const char* blockName = luaL_checkstring(L, 2);
+  const char* namespace = luaL_optstring(L, 3, NULL);
   size_t length;
-  char* code = lovrShaderBlockGetShaderCode(block, blockName, &length);
+  char* code = lovrShaderBlockGetShaderCode(block, blockName, namespace, &length);
   lua_pushlstring(L, code, length);
   free(code);
   return 1;

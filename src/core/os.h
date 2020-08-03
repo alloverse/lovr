@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #pragma once
 
@@ -8,6 +9,7 @@ typedef struct {
   uint32_t height;
   bool fullscreen;
   bool resizable;
+  bool debug;
   int vsync;
   int msaa;
   const char* title;
@@ -48,7 +50,7 @@ typedef enum {
   BUTTON_RELEASED
 } ButtonAction;
 
-typedef void (*windowCloseCallback)(void);
+typedef void (*quitCallback)(void);
 typedef void (*windowFocusCallback)(bool focused);
 typedef void (*windowResizeCallback)(int width, int height);
 typedef void (*mouseButtonCallback)(MouseButton button, ButtonAction action);
@@ -62,6 +64,11 @@ void lovrPlatformSetTime(double t);
 void lovrPlatformSleep(double seconds);
 void lovrPlatformOpenConsole(void);
 void lovrPlatformPollEvents(void);
+size_t lovrPlatformGetHomeDirectory(char* buffer, size_t size);
+size_t lovrPlatformGetDataDirectory(char* buffer, size_t size);
+size_t lovrPlatformGetWorkingDirectory(char* buffer, size_t size);
+size_t lovrPlatformGetExecutablePath(char* buffer, size_t size);
+size_t lovrPlatformGetBundlePath(char* buffer, size_t size, const char** root);
 bool lovrPlatformCreateWindow(WindowFlags* flags);
 bool lovrPlatformHasWindow(void);
 void lovrPlatformGetWindowSize(int* width, int* height);
@@ -69,7 +76,7 @@ void lovrPlatformGetFramebufferSize(int* width, int* height);
 void lovrPlatformSetSwapInterval(int interval);
 void lovrPlatformSwapBuffers(void);
 void* lovrPlatformGetProcAddress(const char* function);
-void lovrPlatformOnWindowClose(windowCloseCallback callback);
+void lovrPlatformOnQuitRequest(quitCallback callback);
 void lovrPlatformOnWindowFocus(windowFocusCallback callback);
 void lovrPlatformOnWindowResize(windowResizeCallback callback);
 void lovrPlatformOnMouseButton(mouseButtonCallback callback);

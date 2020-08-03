@@ -22,8 +22,10 @@ option(LOVR_USE_LUAJIT "Use LuaJIT instead of Lua" ON)
 option(LOVR_USE_OPENVR "Enable the OpenVR backend for the headset module" ON)
 option(LOVR_USE_OPENXR "Enable the OpenXR backend for the headset module" OFF)
 option(LOVR_USE_WEBVR "Enable the WebVR backend for the headset module" OFF)
+option(LOVR_USE_WEBXR "Enable the WebXR backend for the headset module" OFF)
 option(LOVR_USE_OCULUS "Enable the LibOVR backend for the headset module (be sure to also set LOVR_OCULUS_PATH to point to the Oculus SDK)" OFF)
-option(LOVR_USE_OCULUS_MOBILE "Enable the Oculus Mobile (Android) backend for the headset module" OFF)
+option(LOVR_USE_VRAPI "Enable the VrApi backend for the headset module" OFF)
+option(LOVR_USE_PICO "Enable the Pico backend for the headset module" OFF)
 option(LOVR_USE_DESKTOP_HEADSET "Enable the keyboard/mouse backend for the headset module" ON)
 option(LOVR_USE_LEAP "Enable the Leap Motion backend for the headset module" OFF)
 
@@ -33,7 +35,7 @@ option(LOVR_SYSTEM_LUA "Use the system-provided Lua" OFF)
 option(LOVR_SYSTEM_ODE "Use the system-provided ODE" OFF)
 option(LOVR_SYSTEM_OPENAL "Use the system-provided OpenAL" OFF)
 
-option(LOVR_BUILD_EXE "Build an executable" ON)
+option(LOVR_BUILD_EXE "Build an executable (or an apk on Android)" ON)
 option(LOVR_BUILD_SHARED "Build a shared library (takes precedence over LOVR_BUILD_EXE)" OFF)
 option(LOVR_BUILD_BUNDLE "On macOS, build a .app bundle instead of a raw program" OFF)
 
@@ -51,12 +53,15 @@ if(EMSCRIPTEN)
     "-s FORCE_FILESYSTEM=1 "
     "-s \"EXPORTED_FUNCTIONS=[ "
       "'_main','_lovrDestroy',"
+      "'_lovrCanvasCreateFromHandle',"
+      "'_lovrGraphicsSetCamera',"
       "'_webvr_onAnimationFrame',"
       "'_mat4_set','_mat4_identity','_mat4_invert','_mat4_multiply','_mat4_rotateQuat','_mat4_transform','_mat4_transformDirection',"
       "'_quat_fromMat4','_quat_getAngleAxis'"
     "]\" "
     "-s \"EXTRA_EXPORTED_RUNTIME_METHODS=['getValue','setValue']\" "
     "--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/src/resources/webvr.js\" "
+    "--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/src/resources/webxr.js\" "
     "--shell-file \"${CMAKE_CURRENT_SOURCE_DIR}/src/resources/lovr.html\""
   )
   if(LOVR_ENABLE_THREAD)
@@ -66,14 +71,15 @@ if(EMSCRIPTEN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LOVR_EMSCRIPTEN_FLAGS}")
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
   set(LOVR_USE_WEBVR ON)
+  set(LOVR_USE_WEBXR ON)
   set(LOVR_USE_OPENVR OFF)
-  set(LOVR_USE_OCULUS OFF)
 elseif(ANDROID)
+  find_package(Java REQUIRED)
   set(LOVR_USE_OPENVR OFF)
-  set(LOVR_USE_OCULUS OFF)
   set(LOVR_USE_DESKTOP_HEADSET OFF)
-  set(LOVR_USE_OCULUS_MOBILE ON)
-  set(LOVR_BUILD_SHARED ON) # Android has only "activities"
+  if(LOVR_BUILD_EXE)
+    set(LOVR_BUILD_SHARED ON)
+  endif()
 elseif(UNIX)
   find_package(PkgConfig)
   if(NOT APPLE)
@@ -149,7 +155,7 @@ else()
     add_subdirectory(deps/lua lua)
     include_directories(deps/lua/src ${CMAKE_BINARY_DIR}/lua)
     set(LOVR_LUA liblua_static)
-    set_target_properties(lua luac liblua liblua_static PROPERTIES EXCLUDE_FROM_ALL 1)
+    set_target_properties(lua luac PROPERTIES EXCLUDE_FROM_ALL 1)
   endif()
 endif()
 
@@ -283,6 +289,23 @@ if(LOVR_ENABLE_HEADSET AND LOVR_USE_OCULUS)
   set(LOVR_OCULUS LibOVR)
 endif()
 
+# VrApi (Oculus Mobile SDK) -- tested on 1.34.0
+if(LOVR_ENABLE_HEADSET AND LOVR_USE_VRAPI)
+  set(LOVR_VRAPI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/VrApi" CACHE STRING "The path to the VrApi folder of the Oculus Mobile SDK")
+  add_library(VrApi SHARED IMPORTED)
+  include_directories("${LOVR_VRAPI_PATH}/include")
+  set_target_properties(VrApi PROPERTIES IMPORTED_LOCATION "${LOVR_VRAPI_PATH}/Libs/Android/${ANDROID_ABI}/Release/libvrapi.so")
+  set(LOVR_VRAPI VrApi)
+endif()
+
+# Pico Native SDK (1.3.3)
+if(LOVR_ENABLE_HEADSET AND LOVR_USE_PICO)
+  set(LOVR_PICO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/pico" CACHE STRING "The path to the Pico SDK folder (unzipped aar)")
+  add_library(Pvr_NativeSDK SHARED IMPORTED)
+  set_target_properties(Pvr_NativeSDK PROPERTIES IMPORTED_LOCATION "${LOVR_PICO_PATH}/jni/${ANDROID_ABI}/libPvr_NativeSDK.so")
+  set(LOVR_PICO Pvr_NativeSDK)
+endif()
+
 # pthreads
 if(LOVR_ENABLE_THREAD)
   if(NOT WIN32 AND NOT EMSCRIPTEN)
@@ -331,6 +354,10 @@ set(LOVR_SRC
   src/api/l_lovr.c
 )
 
+if(LOVR_USE_PICO)
+  list(REMOVE_ITEM LOVR_SRC src/main.c)
+endif()
+
 if(LOVR_BUILD_SHARED)
   add_definitions(-DLOVR_BUILDING_SHARED)
   add_library(lovr SHARED ${LOVR_SRC})
@@ -355,6 +382,8 @@ target_link_libraries(lovr
   ${LOVR_OPENVR}
   ${LOVR_OPENXR}
   ${LOVR_OCULUS}
+  ${LOVR_VRAPI}
+  ${LOVR_PICO}
   ${LOVR_LEAP}
   ${LOVR_PTHREADS}
   ${LOVR_EMSCRIPTEN_FLAGS}
@@ -364,8 +393,6 @@ if(LOVR_ENABLE_AUDIO)
   add_definitions(-DLOVR_ENABLE_AUDIO)
   target_sources(lovr PRIVATE
     src/modules/audio/audio.c
-    src/modules/audio/source.c
-    src/modules/audio/microphone.c
     src/api/l_audio.c
     src/api/l_audio_source.c
     src/api/l_audio_microphone.c
@@ -417,16 +444,11 @@ endif()
 if(LOVR_ENABLE_GRAPHICS)
   add_definitions(-DLOVR_ENABLE_GRAPHICS)
   target_sources(lovr PRIVATE
-    src/modules/graphics/buffer.c
-    src/modules/graphics/canvas.c
     src/modules/graphics/font.c
     src/modules/graphics/graphics.c
     src/modules/graphics/material.c
-    src/modules/graphics/mesh.c
     src/modules/graphics/model.c
     src/modules/graphics/opengl.c
-    src/modules/graphics/shader.c
-    src/modules/graphics/texture.c
     src/api/l_graphics.c
     src/api/l_graphics_canvas.c
     src/api/l_graphics_font.c
@@ -450,34 +472,42 @@ if(LOVR_ENABLE_HEADSET)
 
   if(LOVR_USE_OPENVR)
     add_definitions(-DLOVR_USE_OPENVR)
-    target_sources(lovr PRIVATE src/modules/headset/openvr.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_openvr.c)
     if(UNIX)
       target_compile_options(lovr PRIVATE -Wno-typedef-redefinition)
     endif()
   endif()
   if(LOVR_USE_OPENXR)
     add_definitions(-DLOVR_USE_OPENXR)
-    target_sources(lovr PRIVATE src/modules/headset/openxr.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_openxr.c)
   endif()
   if(LOVR_USE_OCULUS)
     add_definitions(-DLOVR_USE_OCULUS)
-    target_sources(lovr PRIVATE src/modules/headset/oculus.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_oculus.c)
   endif()
-  if(LOVR_USE_OCULUS_MOBILE)
-    add_definitions(-DLOVR_USE_OCULUS_MOBILE)
-    target_sources(lovr PRIVATE src/modules/headset/oculus_mobile.c)
+  if(LOVR_USE_VRAPI)
+    add_definitions(-DLOVR_USE_VRAPI)
+    target_sources(lovr PRIVATE src/modules/headset/headset_vrapi.c)
+  endif()
+  if(LOVR_USE_PICO)
+    add_definitions(-DLOVR_USE_PICO)
+    target_sources(lovr PRIVATE src/modules/headset/headset_pico.c)
   endif()
   if(LOVR_USE_WEBVR)
     add_definitions(-DLOVR_USE_WEBVR)
-    target_sources(lovr PRIVATE src/modules/headset/webvr.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_webvr.c)
+  endif()
+  if(LOVR_USE_WEBXR)
+    add_definitions(-DLOVR_USE_WEBXR)
+    target_sources(lovr PRIVATE src/modules/headset/headset_webxr.c)
   endif()
   if(LOVR_USE_DESKTOP_HEADSET)
     add_definitions(-DLOVR_USE_DESKTOP_HEADSET)
-    target_sources(lovr PRIVATE src/modules/headset/desktop.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_desktop.c)
   endif()
   if(LOVR_USE_LEAP)
     add_definitions(-DLOVR_USE_LEAP)
-    target_sources(lovr PRIVATE src/modules/headset/leap.c)
+    target_sources(lovr PRIVATE src/modules/headset/headset_leap.c)
   endif()
 endif()
 
@@ -607,9 +637,84 @@ elseif(EMSCRIPTEN)
   target_sources(lovr PRIVATE src/core/os_web.c)
   target_compile_definitions(lovr PRIVATE -DLOVR_WEBGL)
 elseif(ANDROID)
-  target_sources(lovr PRIVATE src/core/os_android.c)
-  target_link_libraries(lovr log EGL GLESv3)
+  target_link_libraries(lovr log EGL GLESv3 android)
   target_compile_definitions(lovr PRIVATE -DLOVR_GLES)
+  target_include_directories(lovr PRIVATE "${ANDROID_NDK}/sources/android/native_app_glue")
+
+  # Dynamically linked targets output libraries in lib/<ABI> for easy including in apk with aapt
+  set_target_properties(
+    lovr ${LOVR_ODE} ${LOVR_OPENAL}
+    PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib/${ANDROID_ABI}"
+  )
+
+  if(LOVR_BUILD_EXE)
+    get_filename_component(ANDROID_SDK "${ANDROID_NDK}" DIRECTORY) # SDK root is parent of NDK dir
+    set(ANDROID_JAR "${ANDROID_SDK}/platforms/${ANDROID_PLATFORM}/android.jar")
+    set(ANDROID_TOOLS "${ANDROID_SDK}/build-tools/${ANDROID_BUILD_TOOLS_VERSION}")
+
+    # If assets are included in the apk then add '-A assets' to aapt, otherwise don't add any flags
+    if(ANDROID_ASSETS)
+      set(ANDROID_ASSETS -A ${ANDROID_ASSETS})
+    endif()
+
+    # Flavor-specific config:
+    # - Imported targets need to have their libraries manually copied to lib/<ABI>
+    # - Figure out which Java class (Activity) and AndroidManifest.xml to use
+    # - Oculus uses the regular android os layer, pico implements its own in the headset backend
+    # - Some of the Pico SDK is in a jar that has to be added to the classpath and dx invocation
+    # TODO error (probably way earlier) if both USE_VRAPI and USE_PICO aren't defined
+    if(LOVR_USE_VRAPI)
+      set(ANDROID_FLAVOR "vrapi")
+      target_sources(lovr PRIVATE src/core/os_android.c)
+      get_target_property(VRAPI_LIB ${LOVR_VRAPI} IMPORTED_LOCATION)
+      file(COPY ${VRAPI_LIB} DESTINATION lib/${ANDROID_ABI})
+      set(ANDROID_CLASSPATH "${ANDROID_JAR}")
+    elseif(LOVR_USE_PICO)
+      set(ANDROID_FLAVOR "pico")
+      get_target_property(PICO_LIB ${LOVR_PICO} IMPORTED_LOCATION)
+      file(COPY ${PICO_LIB} DESTINATION lib/${ANDROID_ABI})
+      set(EXTRA_JAR "${LOVR_PICO_PATH}/classes.jar")
+      if(WIN32)
+        set(ANDROID_CLASSPATH "${ANDROID_JAR};${EXTRA_JAR}")
+      else()
+        set(ANDROID_CLASSPATH "${ANDROID_JAR}:${EXTRA_JAR}")
+      endif()
+    endif()
+
+    set(ANDROID_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/AndroidManifest_${ANDROID_FLAVOR}.xml" CACHE STRING "The AndroidManifest.xml file to use")
+
+    # Make an apk
+    add_custom_command(
+      TARGET lovr
+      POST_BUILD
+      BYPRODUCTS lovr.apk
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+      COMMAND ${CMAKE_COMMAND} -E copy "${ANDROID_MANIFEST}" AndroidManifest.xml
+      COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/Activity_${ANDROID_FLAVOR}.java Activity.java
+      COMMAND ${Java_JAVAC_EXECUTABLE} -classpath "${ANDROID_CLASSPATH}" -d . Activity.java
+      COMMAND ${ANDROID_TOOLS}/dx --dex --output classes.dex ${EXTRA_JAR} org/lovr/app/Activity.class
+      COMMAND
+        ${ANDROID_TOOLS}/aapt
+        package -f
+        -M AndroidManifest.xml
+        -I ${ANDROID_JAR}
+        -F lovr.unaligned.apk
+        ${ANDROID_ASSETS}
+      COMMAND
+        ${ANDROID_TOOLS}/aapt
+        add -f lovr.unaligned.apk
+        classes.dex lib/${ANDROID_ABI}/*.so
+      COMMAND ${ANDROID_TOOLS}/zipalign -f 4 lovr.unaligned.apk lovr.unsigned.apk
+      COMMAND ${ANDROID_TOOLS}/apksigner
+        sign
+        --ks ${ANDROID_KEYSTORE}
+        --ks-pass ${ANDROID_KEYSTORE_PASS}
+        --in lovr.unsigned.apk
+        --out lovr.apk
+      COMMAND ${CMAKE_COMMAND} -E remove lovr.unaligned.apk lovr.unsigned.apk AndroidManifest.xml Activity.java classes.dex
+      COMMAND ${CMAKE_COMMAND} -E remove_directory org
+    )
+  endif()
 elseif(UNIX)
   target_sources(lovr PRIVATE src/core/os_linux.c)
   target_compile_definitions(lovr PRIVATE -DLOVR_GL)

@@ -12,7 +12,7 @@
 
 static struct {
   GLFWwindow* window;
-  windowCloseCallback onWindowClose;
+  quitCallback onQuitRequest;
   windowFocusCallback onWindowFocus;
   windowResizeCallback onWindowResize;
   mouseButtonCallback onMouseButton;
@@ -24,8 +24,8 @@ static void onError(int code, const char* description) {
 }
 
 static void onWindowClose(GLFWwindow* window) {
-  if (glfwState.onWindowClose) {
-    glfwState.onWindowClose();
+  if (glfwState.onQuitRequest) {
+    glfwState.onQuitRequest();
   }
 }
 
@@ -122,6 +122,8 @@ bool lovrPlatformCreateWindow(WindowFlags* flags) {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+  glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, flags->debug);
+  glfwWindowHint(GLFW_CONTEXT_NO_ERROR, !flags->debug);
   glfwWindowHint(GLFW_SAMPLES, flags->msaa);
   glfwWindowHint(GLFW_RESIZABLE, flags->resizable);
   glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
@@ -200,8 +202,8 @@ void* lovrPlatformGetProcAddress(const char* function) {
   return (void*) glfwGetProcAddress(function);
 }
 
-void lovrPlatformOnWindowClose(windowCloseCallback callback) {
-  glfwState.onWindowClose = callback;
+void lovrPlatformOnQuitRequest(quitCallback callback) {
+  glfwState.onQuitRequest = callback;
 }
 
 void lovrPlatformOnWindowFocus(windowFocusCallback callback) {

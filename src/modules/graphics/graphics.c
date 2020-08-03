@@ -92,6 +92,7 @@ typedef struct {
 
 static struct {
   bool initialized;
+  bool debug;
   int width;
   int height;
   Camera camera;
@@ -161,15 +162,16 @@ static void gammaCorrect(Color* color) {
   color->b = lovrMathGammaToLinear(color->b);
 }
 
-static void onCloseWindow(void) {
-  lovrEventPush((Event) { .type = EVENT_QUIT, .data.quit = { false, 0 } });
+static void onQuitRequest(void) {
+  lovrEventPush((Event) { .type = EVENT_QUIT, .data.quit = { .exitCode = 0 } });
 }
 
 static void onResizeWindow(int width, int height) {
   state.width = width;
   state.height = height;
-  state.defaultCanvas->width = width;
-  state.defaultCanvas->height = height;
+  lovrCanvasSetWidth(state.defaultCanvas, width);
+  lovrCanvasSetHeight(state.defaultCanvas, height);
+  lovrEventPush((Event) { .type = EVENT_RESIZE, .data.resize = { width, height } });
 }
 
 static void* lovrGraphicsMapBuffer(StreamType type, uint32_t count) {
@@ -187,7 +189,8 @@ static void* lovrGraphicsMapBuffer(StreamType type, uint32_t count) {
 
 // Base
 
-bool lovrGraphicsInit() {
+bool lovrGraphicsInit(bool debug) {
+  state.debug = debug;
   return false; // See lovrGraphicsCreateWindow for actual initialization
 }
 
@@ -220,12 +223,13 @@ void lovrGraphicsPresent() {
 }
 
 void lovrGraphicsCreateWindow(WindowFlags* flags) {
+  flags->debug = state.debug;
   lovrAssert(!state.initialized, "Window is already created");
   lovrAssert(lovrPlatformCreateWindow(flags), "Could not create window");
-  lovrPlatformOnWindowClose(onCloseWindow);
+  lovrPlatformOnQuitRequest(onQuitRequest);
   lovrPlatformOnWindowResize(onResizeWindow);
   lovrPlatformGetFramebufferSize(&state.width, &state.height);
-  lovrGpuInit(lovrPlatformGetProcAddress);
+  lovrGpuInit(lovrPlatformGetProcAddress, state.debug);
 
   state.defaultCanvas = lovrCanvasCreateFromHandle(state.width, state.height, (CanvasFlags) { .stereo = false }, 0, 0, 0, 1, true);
 
@@ -247,8 +251,8 @@ void lovrGraphicsCreateWindow(WindowFlags* flags) {
   MeshAttribute position = { .buffer = vertexBuffer, .offset = 0, .stride = stride, .type = F32, .components = 3 };
   MeshAttribute normal = { .buffer = vertexBuffer, .offset = 12, .stride = stride, .type = F32, .components = 3 };
   MeshAttribute texCoord = { .buffer = vertexBuffer, .offset = 24, .stride = stride, .type = F32, .components = 2 };
-  MeshAttribute drawId = { .buffer = state.buffers[STREAM_DRAWID], .type = U8, .components = 1, .integer = true };
-  MeshAttribute identity = { .buffer = state.identityBuffer, .type = U8, .components = 1, .divisor = 1, .integer = true };
+  MeshAttribute drawId = { .buffer = state.buffers[STREAM_DRAWID], .type = U8, .components = 1 };
+  MeshAttribute identity = { .buffer = state.identityBuffer, .type = U8, .components = 1, .divisor = 1 };
 
   state.mesh = lovrMeshCreate(DRAW_TRIANGLES, NULL, 0);
   lovrMeshAttachAttribute(state.mesh, "lovrPosition", &position);
@@ -303,13 +307,13 @@ void lovrGraphicsSetCamera(Camera* camera, bool clear) {
     mat4_perspective(state.camera.projection[0], .01f, 100.f, 67.f * (float) M_PI / 180.f, (float) state.width / state.height);
     mat4_perspective(state.camera.projection[1], .01f, 100.f, 67.f * (float) M_PI / 180.f, (float) state.width / state.height);
     state.camera.canvas = state.defaultCanvas;
-    state.camera.canvas->flags.stereo = false;
+    lovrCanvasSetStereo(state.camera.canvas, false);
   } else {
     state.camera = *camera;
 
     if (!state.camera.canvas) {
       state.camera.canvas = state.defaultCanvas;
-      state.camera.canvas->flags.stereo = camera->stereo;
+      lovrCanvasSetStereo(state.camera.canvas, camera->stereo);
     }
   }
 
@@ -363,7 +367,7 @@ Color lovrGraphicsGetBackgroundColor() {
 
 void lovrGraphicsSetBackgroundColor(Color color) {
   state.backgroundColor = state.linearBackgroundColor = color;
-#ifndef LOVR_WEBGL
+#if !defined(LOVR_WEBGL) && !defined(LOVR_USE_PICO)
   gammaCorrect(&state.linearBackgroundColor);
 #endif
 }
@@ -788,7 +792,7 @@ void lovrGraphicsFlushMesh(Mesh* mesh) {
 }
 
 void lovrGraphicsClear(Color* color, float* depth, int* stencil) {
-#ifndef LOVR_WEBGL
+#if !defined(LOVR_WEBGL) && !defined(LOVR_USE_PICO)
   if (color) gammaCorrect(color);
 #endif
   if (color || depth || stencil) lovrGraphicsFlush();

@@ -4,7 +4,6 @@
 #include "graphics/canvas.h"
 #include "graphics/texture.h"
 #include "core/arr.h"
-#include "core/hash.h"
 #include "core/maf.h"
 #include "core/map.h"
 #include "core/ref.h"
@@ -19,6 +18,7 @@ static struct {
   bool needRefreshButtons;
   ovrHmdDesc desc;
   ovrSession session;
+  long long frameIndex;
   ovrGraphicsLuid luid;
   float clipNear;
   float clipFar;
@@ -26,6 +26,10 @@ static struct {
   Canvas* canvas;
   ovrTextureSwapChain chain;
   ovrMirrorTexture mirror;
+  float hapticFrequency[2];
+  float hapticStrength[2];
+  float hapticDuration[2];
+  double hapticLastTime;
   arr_t(Texture*) textures;
   map_t textureLookup;
 } state;
@@ -43,6 +47,10 @@ static Texture* lookupTexture(uint32_t handle) {
   return state.textures.data[index];
 }
 
+static double oculus_getDisplayTime(void) {
+  return ovr_GetPredictedDisplayTime(state.session, state.frameIndex);
+}
+
 static ovrTrackingState *refreshTracking(void) {
   static ovrTrackingState ts;
   if (!state.needRefreshTracking) {
@@ -58,7 +66,7 @@ static ovrTrackingState *refreshTracking(void) {
 
   // get the state head and controllers are predicted to be in at display time,
   // per the manual (frame timing section).
-  double predicted = ovr_GetPredictedDisplayTime(state.session, 0);
+  double predicted = oculus_getDisplayTime();
   ts = ovr_GetTrackingState(state.session, predicted, true);
   state.needRefreshTracking = false;
   return &ts;
@@ -141,10 +149,6 @@ static void oculus_getDisplayDimensions(uint32_t* width, uint32_t* height) {
 static const float* oculus_getDisplayMask(uint32_t* count) {
   *count = 0;
   return NULL;
-}
-
-static double oculus_getDisplayTime(void) {
-  return ovr_GetPredictedDisplayTime(state.session, 0);
 }
 
 static void getEyePoses(ovrPosef poses[2], double* sensorSampleTime) {
@@ -283,10 +287,6 @@ static bool oculus_isTouched(Device device, DeviceButton button, bool* touched) 
   }
 }
 
-static bool oculus_didChange(Device device, DeviceButton button, bool* changed) {
-  return false; // TODO
-}
-
 static bool oculus_getAxis(Device device, DeviceAxis axis, vec3 value) {
   if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT) {
     return false;
@@ -307,7 +307,15 @@ static bool oculus_getAxis(Device device, DeviceAxis axis, vec3 value) {
 }
 
 static bool oculus_vibrate(Device device, float strength, float duration, float frequency) {
-  return false; // TODO
+  if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT) {
+    return false;
+  }
+  int idx = device == DEVICE_HAND_LEFT ? 0 : 1;
+  state.hapticStrength[idx] = CLAMP(strength, 0.0f, 1.0f);
+  state.hapticDuration[idx] = MAX(duration, 0.0f);
+  float freq = CLAMP(frequency / 320.0f, 0.0f, 1.0f); // 1.0 = 320hz, limit on Rift CV1 touch controllers.
+  state.hapticFrequency[idx] = freq;
+  return true;
 }
 
 static ModelData* oculus_newModelData(Device device) {
@@ -348,6 +356,18 @@ static void oculus_renderTo(void (*callback)(void*), void* userdata) {
   double sensorSampleTime;
   getEyePoses(EyeRenderPose, &sensorSampleTime);
 
+  float delta = (float)(sensorSampleTime - state.hapticLastTime);
+  delta = MAX(delta, 0);
+  state.hapticLastTime = sensorSampleTime;
+  for (int i = 0; i < 2; ++i) {
+    ovr_SetControllerVibration(state.session, ovrControllerType_LTouch + i, state.hapticFrequency[i], state.hapticStrength[i]);
+    state.hapticDuration[i] -= delta;
+    if (state.hapticDuration[i] <= 0.0f) {
+      state.hapticStrength[i] = 0.0f;
+      state.hapticDuration[i] = 0.0f;
+    }
+  }
+
   Camera camera = { .canvas = state.canvas };
 
   for (int eye = 0; eye < 2; eye++) {
@@ -372,6 +392,9 @@ static void oculus_renderTo(void (*callback)(void*), void* userdata) {
     ovrMatrix4f projection = ovrMatrix4f_Projection(state.desc.DefaultEyeFov[eye], state.clipNear, state.clipFar, ovrProjection_ClipRangeOpenGL);
     mat4_fromMat44(camera.projection[eye], projection.M);
   }
+
+  ovr_WaitToBeginFrame(state.session, state.frameIndex);
+  ovr_BeginFrame(state.session, state.frameIndex);
 
   int curIndex;
   uint32_t curTexId;
@@ -403,7 +426,8 @@ static void oculus_renderTo(void (*callback)(void*), void* userdata) {
   }
 
   const ovrLayerHeader* layers = &ld.Header;
-  ovr_SubmitFrame(state.session, 0, NULL, &layers, 1);
+  ovr_EndFrame(state.session, state.frameIndex, NULL, &layers, 1);
+  ++state.frameIndex;
 
   state.needRefreshTracking = true;
   state.needRefreshButtons = true;

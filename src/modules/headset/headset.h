@@ -13,10 +13,12 @@ typedef enum {
   DRIVER_DESKTOP,
   DRIVER_LEAP_MOTION,
   DRIVER_OCULUS,
-  DRIVER_OCULUS_MOBILE,
   DRIVER_OPENVR,
   DRIVER_OPENXR,
-  DRIVER_WEBVR
+  DRIVER_VRAPI,
+  DRIVER_PICO,
+  DRIVER_WEBVR,
+  DRIVER_WEBXR
 } HeadsetDriver;
 
 typedef enum {
@@ -42,6 +44,10 @@ typedef enum {
   DEVICE_HAND_RIGHT_FINGER_MIDDLE,
   DEVICE_HAND_RIGHT_FINGER_RING,
   DEVICE_HAND_RIGHT_FINGER_PINKY,
+  DEVICE_BEACON_1,
+  DEVICE_BEACON_2,
+  DEVICE_BEACON_3,
+  DEVICE_BEACON_4,
   MAX_DEVICES
 } Device;
 
@@ -111,9 +117,11 @@ typedef struct HeadsetInterface {
 extern HeadsetInterface lovrHeadsetOculusDriver;
 extern HeadsetInterface lovrHeadsetOpenVRDriver;
 extern HeadsetInterface lovrHeadsetOpenXRDriver;
+extern HeadsetInterface lovrHeadsetVrApiDriver;
+extern HeadsetInterface lovrHeadsetPicoDriver;
 extern HeadsetInterface lovrHeadsetWebVRDriver;
+extern HeadsetInterface lovrHeadsetWebXRDriver;
 extern HeadsetInterface lovrHeadsetDesktopDriver;
-extern HeadsetInterface lovrHeadsetOculusMobileDriver;
 extern HeadsetInterface lovrHeadsetLeapMotionDriver;
 
 // Active drivers

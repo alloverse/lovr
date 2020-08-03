@@ -14,6 +14,9 @@ static size_t getPixelSize(TextureFormat format) {
     case FORMAT_RGB: return 3;
     case FORMAT_RGBA: return 4;
     case FORMAT_RGBA4: return 2;
+    case FORMAT_R16: return 2;
+    case FORMAT_RG16: return 4;
+    case FORMAT_RGBA16: return 8;
     case FORMAT_RGBA16F: return 8;
     case FORMAT_RGBA32F: return 16;
     case FORMAT_R16F: return 2;
@@ -452,17 +455,22 @@ static bool parseASTC(uint8_t* bytes, size_t size, TextureData* textureData) {
   return true;
 }
 
-TextureData* lovrTextureDataInit(TextureData* textureData, uint32_t width, uint32_t height, uint8_t value, TextureFormat format) {
-  lovrAssert(width > 0 && height > 0, "TextureData dimensions must be positive");
-  lovrAssert(format < FORMAT_DXT1, "Blank TextureData cannot be compressed");
+TextureData* lovrTextureDataInit(TextureData* textureData, uint32_t width, uint32_t height, Blob* contents, uint8_t value, TextureFormat format) {
   size_t pixelSize = getPixelSize(format);
   size_t size = width * height * pixelSize;
+  lovrAssert(width > 0 && height > 0, "TextureData dimensions must be positive");
+  lovrAssert(format < FORMAT_DXT1, "Blank TextureData cannot be compressed");
+  lovrAssert(!contents || contents->size >= size, "TextureData Blob is too small (%d bytes needed, got %d)", size, contents->size);
   textureData->width = width;
   textureData->height = height;
   textureData->format = format;
-  void *data = malloc(size);
+  void* data = malloc(size);
   lovrAssert(data, "Out of memory");
-  memset(data, value, size);
+  if (contents) {
+    memcpy(data, contents->data, size);
+  } else {
+    memset(data, value, size);
+  }
   textureData->blob = lovrBlobCreate(data, size, "TextureData plain");
   return textureData;
 }
@@ -486,12 +494,33 @@ TextureData* lovrTextureDataInitFromBlob(TextureData* textureData, Blob* blob, b
   int width, height;
   int length = (int) blob->size;
   stbi_set_flip_vertically_on_load(flip);
-  if (stbi_is_hdr_from_memory(blob->data, length)) {
+  if (stbi_is_16_bit_from_memory(blob->data, length)) {
+    int channels;
+    textureData->blob->data = stbi_load_16_from_memory(blob->data, length, &width, &height, &channels, 0);
+    switch (channels) {
+      case 1:
+        textureData->format = FORMAT_R16;
+        textureData->blob->size = 2 * width * height;
+        break;
+      case 2:
+        textureData->format = FORMAT_RG16;
+        textureData->blob->size = 4 * width * height;
+        break;
+      case 4:
+        textureData->format = FORMAT_RGBA16;
+        textureData->blob->size = 8 * width * height;
+        break;
+      default:
+        lovrThrow("Unsupported channel count for 16 bit image: %d", channels);
+    }
+  } else if (stbi_is_hdr_from_memory(blob->data, length)) {
     textureData->format = FORMAT_RGBA32F;
     textureData->blob->data = stbi_loadf_from_memory(blob->data, length, &width, &height, NULL, 4);
+    textureData->blob->size = 16 * width * height;
   } else {
     textureData->format = FORMAT_RGBA;
     textureData->blob->data = stbi_load_from_memory(blob->data, length, &width, &height, NULL, 4);
+    textureData->blob->size = 4 * width * height;
   }
 
   if (!textureData->blob->data) {
