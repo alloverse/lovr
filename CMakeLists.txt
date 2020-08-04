@@ -291,7 +291,7 @@ endif()
 
 # VrApi (Oculus Mobile SDK) -- tested on 1.34.0
 if(LOVR_ENABLE_HEADSET AND LOVR_USE_VRAPI)
-  set(LOVR_VRAPI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/VrApi" CACHE STRING "The path to the VrApi folder of the Oculus Mobile SDK")
+  set(LOVR_VRAPI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/oculus-mobile/VrApi" CACHE STRING "The path to the VrApi folder of the Oculus Mobile SDK")
   add_library(VrApi SHARED IMPORTED)
   include_directories("${LOVR_VRAPI_PATH}/Include")
   set_target_properties(VrApi PROPERTIES IMPORTED_LOCATION "${LOVR_VRAPI_PATH}/Libs/Android/${ANDROID_ABI}/Release/libvrapi.so")
@@ -300,7 +300,7 @@ endif()
 
 # Pico Native SDK (1.3.3)
 if(LOVR_ENABLE_HEADSET AND LOVR_USE_PICO)
-  set(LOVR_PICO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/pico" CACHE STRING "The path to the Pico SDK folder (unzipped aar)")
+  set(LOVR_PICO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/pico/aar" CACHE STRING "The path to the Pico SDK folder (unzipped aar)")
   add_library(Pvr_NativeSDK SHARED IMPORTED)
   set_target_properties(Pvr_NativeSDK PROPERTIES IMPORTED_LOCATION "${LOVR_PICO_PATH}/jni/${ANDROID_ABI}/libPvr_NativeSDK.so")
   set(LOVR_PICO Pvr_NativeSDK)

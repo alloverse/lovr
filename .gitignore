@@ -33,5 +33,3 @@ bin
 .DS_Store
 .vs
 /test
-deps/VrApi
-deps/pico
