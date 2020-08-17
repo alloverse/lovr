@@ -84,7 +84,6 @@ function lovr.boot()
     version = '0.13.0',
     identity = 'default',
     saveprecedence = true,
-    hotkeys = true,
     modules = {
       audio = true,
       data = true,
@@ -100,7 +99,7 @@ function lovr.boot()
       debug = false
     },
     headset = {
-      drivers = { 'leap', 'openxr', 'oculus', 'vrapi', 'pico', 'openvr', 'webxr', 'webvr', 'desktop' },
+      drivers = { 'leap', 'openxr', 'oculus', 'vrapi', 'pico', 'openvr', 'webxr', 'desktop' },
       offset = 1.7,
       msaa = 4
     },
