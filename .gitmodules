@@ -28,3 +28,6 @@
 [submodule "deps/pico"]
 	path = deps/pico
 	url = https://github.com/alloverse/pico_native_sdk
+[submodule "deps/oculus-pc"]
+	path = deps/oculus-pc
+	url = https://github.com/alloverse/ovr_sdk_pc.git
