@@ -10,7 +10,6 @@
 
 StringEntry HeadsetDrivers[] = {
   [DRIVER_DESKTOP] = ENTRY("desktop"),
-  [DRIVER_LEAP_MOTION] = ENTRY("leap"),
   [DRIVER_OCULUS] = ENTRY("oculus"),
   [DRIVER_OPENVR] = ENTRY("openvr"),
   [DRIVER_OPENXR] = ENTRY("openxr"),
@@ -34,16 +33,6 @@ StringEntry Devices[] = {
   [DEVICE_HAND_RIGHT_POINT] = ENTRY("hand/right/point"),
   [DEVICE_EYE_LEFT] = ENTRY("eye/left"),
   [DEVICE_EYE_RIGHT] = ENTRY("eye/right"),
-  [DEVICE_HAND_LEFT_FINGER_THUMB] = ENTRY("hand/left/finger/thumb"),
-  [DEVICE_HAND_LEFT_FINGER_INDEX] = ENTRY("hand/left/finger/index"),
-  [DEVICE_HAND_LEFT_FINGER_MIDDLE] = ENTRY("hand/left/finger/middle"),
-  [DEVICE_HAND_LEFT_FINGER_RING] = ENTRY("hand/left/finger/ring"),
-  [DEVICE_HAND_LEFT_FINGER_PINKY] = ENTRY("hand/left/finger/pinky"),
-  [DEVICE_HAND_RIGHT_FINGER_THUMB] = ENTRY("hand/right/finger/thumb"),
-  [DEVICE_HAND_RIGHT_FINGER_INDEX] = ENTRY("hand/right/finger/index"),
-  [DEVICE_HAND_RIGHT_FINGER_MIDDLE] = ENTRY("hand/right/finger/middle"),
-  [DEVICE_HAND_RIGHT_FINGER_RING] = ENTRY("hand/right/finger/ring"),
-  [DEVICE_HAND_RIGHT_FINGER_PINKY] = ENTRY("hand/right/finger/pinky"),
   [DEVICE_BEACON_1] = ENTRY("beacon/1"),
   [DEVICE_BEACON_2] = ENTRY("beacon/2"),
   [DEVICE_BEACON_3] = ENTRY("beacon/3"),
@@ -70,9 +59,6 @@ StringEntry DeviceAxes[] = {
   [AXIS_THUMBSTICK] = ENTRY("thumbstick"),
   [AXIS_TOUCHPAD] = ENTRY("touchpad"),
   [AXIS_GRIP] = ENTRY("grip"),
-  [AXIS_CURL] = ENTRY("curl"),
-  [AXIS_SPLAY] = ENTRY("splay"),
-  [AXIS_PINCH] = ENTRY("pinch"),
   { 0 }
 };
 
@@ -86,7 +72,7 @@ static HeadsetRenderData headsetRenderData;
 static void renderHelper(void* userdata) {
   HeadsetRenderData* renderData = userdata;
   lua_State* L = renderData->L;
-#if defined(EMSCRIPTEN) || defined(LOVR_USE_PICO)
+#ifdef LOVR_USE_PICO
   luax_geterror(L);
   if (lua_isnil(L, -1)) {
     lua_pushcfunction(L, luax_getstack);
@@ -110,6 +96,47 @@ static Device luax_optdevice(lua_State* L, int index) {
     return DEVICE_HAND_RIGHT;
   }
   return luax_checkenum(L, 1, Devices, "head", "Device");
+}
+
+static int l_lovrHeadsetInit(lua_State* L) {
+  luax_pushconf(L);
+  lua_getfield(L, -1, "headset");
+
+  size_t driverCount = 0;
+  HeadsetDriver drivers[8];
+  float offset = 1.7f;
+  int msaa = 4;
+
+  if (lua_istable(L, -1)) {
+
+    // Drivers
+    lua_getfield(L, -1, "drivers");
+    int n = luax_len(L, -1);
+    for (int i = 0; i < n; i++) {
+      lua_rawgeti(L, -1, i + 1);
+      drivers[driverCount++] = luax_checkenum(L, -1, HeadsetDrivers, NULL, "HeadsetDriver");
+      lovrAssert(driverCount < sizeof(drivers) / sizeof(drivers[0]), "Too many headset drivers specified in conf.lua");
+      lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    // Offset
+    lua_getfield(L, -1, "offset");
+    offset = luax_optfloat(L, -1, 1.7f);
+    lua_pop(L, 1);
+
+    // MSAA
+    lua_getfield(L, -1, "msaa");
+    msaa = luaL_optinteger(L, -1, 4);
+    lua_pop(L, 1);
+  }
+
+  if (lovrHeadsetInit(drivers, driverCount, offset, msaa)) {
+    luax_atexit(L, lovrHeadsetDestroy);
+  }
+
+  lua_pop(L, 2);
+  return 0;
 }
 
 static int l_lovrHeadsetGetDriver(lua_State* L) {
@@ -471,10 +498,7 @@ static const int axisCounts[MAX_AXES] = {
   [AXIS_TRIGGER] = 1,
   [AXIS_THUMBSTICK] = 2,
   [AXIS_TOUCHPAD] = 2,
-  [AXIS_GRIP] = 1,
-  [AXIS_CURL] = 1,
-  [AXIS_SPLAY] = 1,
-  [AXIS_PINCH] = 1
+  [AXIS_GRIP] = 1
 };
 
 static int l_lovrHeadsetGetAxis(lua_State* L) {
@@ -598,7 +622,7 @@ static int l_lovrHeadsetRenderTo(lua_State* L) {
   lua_settop(L, 1);
   luaL_checktype(L, 1, LUA_TFUNCTION);
 
-#if defined(EMSCRIPTEN) || defined(LOVR_USE_PICO)
+#ifdef LOVR_USE_PICO
   if (headsetRenderData.ref != LUA_NOREF) {
     luaL_unref(L, LUA_REGISTRYINDEX, headsetRenderData.ref);
   }
@@ -668,6 +692,7 @@ static int l_lovrHeadsetGetHands(lua_State* L) {
 }
 
 static const luaL_Reg lovrHeadset[] = {
+  { "init", l_lovrHeadsetInit },
   { "getDriver", l_lovrHeadsetGetDriver },
   { "getName", l_lovrHeadsetGetName },
   { "getOriginType", l_lovrHeadsetGetOriginType },
@@ -710,45 +735,7 @@ static const luaL_Reg lovrHeadset[] = {
 
 int luaopen_lovr_headset(lua_State* L) {
   lua_newtable(L);
-  luaL_register(L, NULL, lovrHeadset);
-
-  luax_pushconf(L);
-  lua_getfield(L, -1, "headset");
-
-  size_t driverCount = 0;
-  HeadsetDriver drivers[16];
-  float offset = 1.7f;
-  int msaa = 4;
-
-  if (lua_istable(L, -1)) {
-
-    // Drivers
-    lua_getfield(L, -1, "drivers");
-    int n = luax_len(L, -1);
-    for (int i = 0; i < n; i++) {
-      lua_rawgeti(L, -1, i + 1);
-      drivers[driverCount++] = luax_checkenum(L, -1, HeadsetDrivers, NULL, "HeadsetDriver");
-      lovrAssert(driverCount < sizeof(drivers) / sizeof(drivers[0]), "Too many headset drivers specified in conf.lua");
-      lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-
-    // Offset
-    lua_getfield(L, -1, "offset");
-    offset = luax_optfloat(L, -1, 1.7f);
-    lua_pop(L, 1);
-
-    // MSAA
-    lua_getfield(L, -1, "msaa");
-    msaa = luaL_optinteger(L, -1, 4);
-    lua_pop(L, 1);
-  }
-
-  if (lovrHeadsetInit(drivers, driverCount, offset, msaa)) {
-    luax_atexit(L, lovrHeadsetDestroy);
-  }
-
-  lua_pop(L, 2);
+  luax_register(L, lovrHeadset);
   headsetRenderData.ref = LUA_NOREF;
   return 1;
 }

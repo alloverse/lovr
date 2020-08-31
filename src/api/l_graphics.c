@@ -243,7 +243,9 @@ static uint32_t luax_getvertexcount(lua_State* L, int index) {
     return tableType == LUA_TNUMBER ? count / 3 : count;
   } else if (type == LUA_TNUMBER) {
     return (lua_gettop(L) - index + 1) / 3;
-  } else {
+  } else if (type == LUA_TNONE || type == LUA_TNIL) {
+    return 0;
+  } else { // vec3
     return lua_gettop(L) - index + 1;
   }
 }
@@ -1732,7 +1734,7 @@ static const luaL_Reg lovrGraphics[] = {
 
 int luaopen_lovr_graphics(lua_State* L) {
   lua_newtable(L);
-  luaL_register(L, NULL, lovrGraphics);
+  luax_register(L, lovrGraphics);
   luax_registertype(L, Canvas);
   luax_registertype(L, Font);
   luax_registertype(L, Material);

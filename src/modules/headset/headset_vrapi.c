@@ -351,7 +351,7 @@ static bool vrapi_getSkeleton(Device device, float* poses) {
     memcpy(translation, &skeleton->BonePoses[i].Position.x, 3 * sizeof(float));
     quat_rotate(pose + 4, translation);
     vec3_add(pose + 0, translation);
-    quat_mul(pose + 4, &handPose->BoneRotations[i].x);
+    quat_mul(pose + 4, pose + 4, &handPose->BoneRotations[i].x);
   }
 
   // We try our best, okay?
@@ -628,7 +628,7 @@ static void vrapi_renderTo(void (*callback)(void*), void* userdata) {
     for (uint32_t i = 0; i < state.swapchainLength; i++) {
       state.canvases[i] = lovrCanvasCreate(width, height, flags);
       uint32_t handle = vrapi_GetTextureSwapChainHandle(state.swapchain, i);
-      Texture* texture = lovrTextureCreateFromHandle(handle, TEXTURE_ARRAY, 2);
+      Texture* texture = lovrTextureCreateFromHandle(handle, TEXTURE_ARRAY, 2, 1);
       lovrCanvasSetAttachments(state.canvases[i], &(Attachment) { .texture = texture }, 1);
       lovrRelease(Texture, texture);
     }

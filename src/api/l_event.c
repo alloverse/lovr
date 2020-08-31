@@ -96,14 +96,14 @@ StringEntry KeyCodes[] = {
   [KEY_COMMA] = ENTRY(","),
   [KEY_PERIOD] = ENTRY("."),
   [KEY_SLASH] = ENTRY("/"),
-  [KEY_LEFT_SHIFT] = ENTRY("lshift"),
-  [KEY_RIGHT_SHIFT] = ENTRY("rshift"),
   [KEY_LEFT_CONTROL] = ENTRY("lctrl"),
-  [KEY_RIGHT_CONTROL] = ENTRY("rctrl"),
+  [KEY_LEFT_SHIFT] = ENTRY("lshift"),
   [KEY_LEFT_ALT] = ENTRY("lalt"),
+  [KEY_LEFT_OS] = ENTRY("lgui"),
+  [KEY_RIGHT_CONTROL] = ENTRY("rctrl"),
+  [KEY_RIGHT_SHIFT] = ENTRY("rshift"),
   [KEY_RIGHT_ALT] = ENTRY("ralt"),
-  [KEY_LEFT_SUPER] = ENTRY("lgui"),
-  [KEY_RIGHT_SUPER] = ENTRY("rgui"),
+  [KEY_RIGHT_OS] = ENTRY("rgui"),
   [KEY_CAPS_LOCK] = ENTRY("capslock"),
   [KEY_SCROLL_LOCK] = ENTRY("scrolllock"),
   [KEY_NUM_LOCK] = ENTRY("numlock"),
@@ -272,7 +272,7 @@ static int l_lovrEventPush(lua_State* L) {
 static int l_lovrEventQuit(lua_State* L) {
   EventData data;
 
-  data.quit.exitCode = luaL_optint(L, 1, 0);
+  data.quit.exitCode = luaL_optinteger(L, 1, 0);
 
   EventType type = EVENT_QUIT;
   Event event = { .type = type, .data = data };
@@ -299,7 +299,7 @@ static const luaL_Reg lovrEvent[] = {
 
 int luaopen_lovr_event(lua_State* L) {
   lua_newtable(L);
-  luaL_register(L, NULL, lovrEvent);
+  luax_register(L, lovrEvent);
 
   // Store nextEvent in the registry to avoid creating a closure every time we poll for events.
   lua_pushcfunction(L, nextEvent);

@@ -141,6 +141,10 @@ void lovrPlatformGetFramebufferSize(int* width, int* height) {
   *height = 0;
 }
 
+void lovrPlatformSetSwapInterval(int interval) {
+  //
+}
+
 void lovrPlatformSwapBuffers() {
   //
 }
@@ -170,7 +174,7 @@ void lovrPlatformOnKeyboardEvent(keyboardCallback callback) {
 }
 
 void lovrPlatformOnTextEvent(textCallback callback) {
-  //
+  // todo
 }
 
 void lovrPlatformGetMousePosition(double* x, double* y) {
@@ -453,7 +457,7 @@ static void lovrPicoBoot(void) {
 
   lua_getglobal(L, "package");
   lua_getfield(L, -1, "preload");
-  luaL_register(L, NULL, lovrModules);
+  luax_register(L, lovrModules);
   lua_pop(L, 2);
 
   lua_pushcfunction(L, luax_getstack);
@@ -520,7 +524,7 @@ JNIEXPORT void JNICALL Java_org_lovr_app_Activity_lovrPicoOnFrame(JNIEnv* jni, j
   if (L && T) {
     luax_geterror(T);
     luax_clearerror(T);
-    if (lua_resume(T, 1) != LUA_YIELD) {
+    if (luax_resume(T, 1) != LUA_YIELD) {
       bool restart = lua_type(T, 1) == LUA_TSTRING && !strcmp(lua_tostring(T, 1), "restart");
       if (restart) {
         luax_checkvariant(T, 2, &cookie);

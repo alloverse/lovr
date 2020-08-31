@@ -108,17 +108,20 @@ typedef enum {
   KEY_PERIOD,
   KEY_SLASH,
 
-  KEY_LEFT_SHIFT,
-  KEY_RIGHT_SHIFT,
   KEY_LEFT_CONTROL,
-  KEY_RIGHT_CONTROL,
+  KEY_LEFT_SHIFT,
   KEY_LEFT_ALT,
+  KEY_LEFT_OS,
+  KEY_RIGHT_CONTROL,
+  KEY_RIGHT_SHIFT,
   KEY_RIGHT_ALT,
-  KEY_LEFT_SUPER,
-  KEY_RIGHT_SUPER,
+  KEY_RIGHT_OS,
+
   KEY_CAPS_LOCK,
   KEY_SCROLL_LOCK,
-  KEY_NUM_LOCK
+  KEY_NUM_LOCK,
+
+  KEY_COUNT
 } KeyCode;
 
 typedef enum {
@@ -163,8 +166,3 @@ void lovrPlatformGetMousePosition(double* x, double* y);
 void lovrPlatformSetMouseMode(MouseMode mode);
 bool lovrPlatformIsMouseDown(MouseButton button);
 bool lovrPlatformIsKeyDown(KeyCode key);
-#ifdef _WIN32
-#include <windows.h>
-HANDLE lovrPlatformGetWindow(void);
-HGLRC lovrPlatformGetContext(void);
-#endif

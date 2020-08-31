@@ -1,5 +1,4 @@
 #include "headset/headset.h"
-#include <stdbool.h>
 
 extern bool webxr_init(float offset, uint32_t msaa);
 extern void webxr_destroy(void);
@@ -20,11 +19,52 @@ extern bool webxr_getVelocity(Device device, float* velocity, float* angularVelo
 extern bool webxr_isDown(Device device, DeviceButton button, bool* down, bool* changed);
 extern bool webxr_isTouched(Device device, DeviceButton button, bool* touched);
 extern bool webxr_getAxis(Device device, DeviceAxis axis, float* value);
+extern bool webxr_getSkeleton(Device device, float* poses);
 extern bool webxr_vibrate(Device device, float strength, float duration, float frequency);
 extern struct ModelData* webxr_newModelData(Device device, bool animated);
 extern bool webxr_animate(Device device, struct Model* model);
 extern void webxr_renderTo(void (*callback)(void*), void* userdata);
 extern void webxr_update(float dt);
+
+static bool webxrAttached = false;
+static HeadsetInterface* previousHeadsetDriver;
+
+static void setDriver(HeadsetInterface* new) {
+  if (lovrHeadsetTrackingDrivers == lovrHeadsetDriver) {
+    lovrHeadsetTrackingDrivers = new;
+  } else {
+    FOREACH_TRACKING_DRIVER(driver) {
+      if (driver->next == lovrHeadsetDriver) {
+        driver->next = new;
+        break;
+      }
+    }
+  }
+
+  new->next = lovrHeadsetDriver->next;
+  lovrHeadsetDriver->next = NULL;
+  lovrHeadsetDriver = new;
+}
+
+void webxr_attach() {
+  if (webxrAttached || lovrHeadsetDriver == &lovrHeadsetWebXRDriver) {
+    return;
+  }
+
+  previousHeadsetDriver = lovrHeadsetDriver;
+  setDriver(&lovrHeadsetWebXRDriver);
+  webxrAttached = true;
+}
+
+void webxr_detach() {
+  if (!webxrAttached) {
+    return;
+  }
+
+  setDriver(previousHeadsetDriver);
+  previousHeadsetDriver = NULL;
+  webxrAttached = false;
+}
 
 HeadsetInterface lovrHeadsetWebXRDriver = {
   .driverType = DRIVER_WEBXR,
@@ -47,6 +87,7 @@ HeadsetInterface lovrHeadsetWebXRDriver = {
   .isDown = webxr_isDown,
   .isTouched = webxr_isTouched,
   .getAxis = webxr_getAxis,
+  .getSkeleton = webxr_getSkeleton,
   .vibrate = webxr_vibrate,
   .newModelData = webxr_newModelData,
   .animate = webxr_animate,

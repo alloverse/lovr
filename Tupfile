@@ -30,7 +30,6 @@ SRC_@(HEADSET)@(OCULUS) += src/modules/headset/headset_oculus.c
 SRC_@(HEADSET)@(VRAPI) += src/modules/headset/headset_vrapi.c
 SRC_@(HEADSET)@(PICO) += src/modules/headset/headset_pico.c
 SRC_@(HEADSET)@(WEBXR) += src/modules/headset/headset_webxr.c
-SRC_@(HEADSET)@(LEAP) += src/modules/headset/headset_leap.c
 SRC_@(MATH) += src/modules/math/*.c
 SRC_@(PHYSICS) += src/modules/physics/*.c
 SRC_@(THREAD) += src/modules/thread/*.c
@@ -72,7 +71,7 @@ SRC_@(GRAPHICS) += src/resources/shaders.c
 # 4 [CP] copy external libs -> libs folder
 : foreach $(RES) $(RES_y) |> !xd |> %f.h
 : foreach $(SRC) $(SRC_y) $(SRC_yy) | src/resources/*.h |> !cc |> .obj/%B.o
-: .obj/*.o $(STATIC_LIBS) $(STATIC_LIBS_y) |> !ld |> $(PREFIX)lovr$(SUFFIX) | $(EXTRAS) $(EXTRAS_y)
+: .obj/*.o |> !ld |> $(PREFIX)lovr$(SUFFIX) | $(EXTRAS) $(EXTRAS_y)
 : foreach $(LIBS) |> !cp |> $(LIB)/%b
 
 # Android

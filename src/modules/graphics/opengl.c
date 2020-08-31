@@ -767,7 +767,7 @@ static void lovrGpuBindImage(Image* image, int slot, const char* name) {
   if (memcmp(state.images + slot, image, sizeof(Image))) {
     Texture* texture = image->texture;
     lovrAssert(texture, "No Texture bound to image uniform '%s'", name);
-    lovrAssert(!texture->srgb, "Attempt to bind sRGB texture to image uniform '%s'", name);
+    lovrAssert(texture->format != FORMAT_RGBA || !texture->srgb, "Attempt to bind sRGB texture to image uniform '%s'", name);
     lovrAssert(!isTextureFormatCompressed(texture->format), "Attempt to bind compressed texture to image uniform '%s'", name);
     lovrAssert(texture->format != FORMAT_RGB && texture->format != FORMAT_RGBA4 && texture->format != FORMAT_RGB5A1, "Unsupported texture format for image uniform '%s'", name);
     lovrAssert(image->mipmap < (int) texture->mipmapCount, "Invalid mipmap level '%d' for image uniform '%s'", image->mipmap, name);
@@ -1681,7 +1681,7 @@ Texture* lovrTextureCreate(TextureType type, TextureData** slices, uint32_t slic
   return texture;
 }
 
-Texture* lovrTextureCreateFromHandle(uint32_t handle, TextureType type, uint32_t depth) {
+Texture* lovrTextureCreateFromHandle(uint32_t handle, TextureType type, uint32_t depth, uint32_t msaa) {
   Texture* texture = lovrAlloc(Texture);
   state.stats.textureCount++;
   texture->type = type;
@@ -1698,6 +1698,15 @@ Texture* lovrTextureCreateFromHandle(uint32_t handle, TextureType type, uint32_t
   texture->height = (uint32_t) height;
   texture->depth = depth; // There isn't an easy way to get depth/layer count, so it's passed in...
   texture->mipmapCount = 1;
+
+  if (msaa > 1) {
+    texture->msaa = msaa;
+    GLint internalFormat;
+    glGetTexLevelParameteriv(texture->target, 0, GL_TEXTURE_INTERNAL_FORMAT, &internalFormat);
+    glGenRenderbuffers(1, &texture->msaaId);
+    glBindRenderbuffer(GL_RENDERBUFFER, texture->msaaId);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, texture->msaa, internalFormat, width, height);
+  }
 
   return texture;
 }

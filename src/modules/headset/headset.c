@@ -9,7 +9,7 @@ bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_
   if (initialized) return false;
   initialized = true;
 
-  HeadsetInterface* lastTrackingDriver = NULL;
+  HeadsetInterface** trackingDrivers = &lovrHeadsetTrackingDrivers;
 
   for (size_t i = 0; i < count; i++) {
     HeadsetInterface* interface = NULL;
@@ -17,9 +17,6 @@ bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_
     switch (drivers[i]) {
 #ifdef LOVR_USE_DESKTOP_HEADSET
       case DRIVER_DESKTOP: interface = &lovrHeadsetDesktopDriver; break;
-#endif
-#ifdef LOVR_USE_LEAP
-      case DRIVER_LEAP_MOTION: interface = &lovrHeadsetLeapMotionDriver; break;
 #endif
 #ifdef LOVR_USE_OCULUS
       case DRIVER_OCULUS: interface = &lovrHeadsetOculusDriver; break;
@@ -50,13 +47,8 @@ bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_
         lovrHeadsetDriver = interface;
       }
 
-      if (lastTrackingDriver) {
-        lastTrackingDriver->next = interface;
-      } else {
-        lovrHeadsetTrackingDrivers = interface;
-      }
-
-      lastTrackingDriver = interface;
+      *trackingDrivers = interface;
+      trackingDrivers = &interface->next;
     }
   }
 

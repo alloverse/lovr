@@ -50,8 +50,14 @@ local function nogame()
 
     if lovr.headset then
       for i, hand in ipairs(lovr.headset.getHands()) do
-        models[hand] = models[hand] or lovr.headset.newModel(hand)
+        models[hand] = models[hand] or lovr.headset.newModel(hand, { animated = true })
         if models[hand] then
+          if lovr.headset.animate(hand, models[hand]) and models[hand]:hasJoints() then
+            animatedShader = animatedShader or lovr.graphics.newShader('unlit', {
+              flags = { animated = true }
+            })
+            lovr.graphics.setShader(animatedShader)
+          end
           local x, y, z, angle, ax, ay, az = lovr.headset.getPose(hand)
           models[hand]:draw(x, y, z, 1.0, angle, ax, ay, az)
         end
@@ -99,7 +105,7 @@ function lovr.boot()
       debug = false
     },
     headset = {
-      drivers = { 'leap', 'openxr', 'oculus', 'vrapi', 'pico', 'openvr', 'webxr', 'desktop' },
+      drivers = { 'openxr', 'oculus', 'vrapi', 'pico', 'openvr', 'webxr', 'desktop' },
       offset = 1.7,
       msaa = 4
     },
@@ -138,6 +144,10 @@ function lovr.boot()
         lovr[module] = result
       end
     end
+  end
+
+  if lovr.headset and lovr.graphics and conf.window then
+    lovr.headset.init()
   end
 
   lovr.handlers = setmetatable({}, { __index = lovr })
@@ -220,12 +230,13 @@ function lovr.errhand(message, traceback)
   lovr.graphics.setBackgroundColor(.11, .10, .14)
   lovr.graphics.setColor(.85, .85, .85)
   local font = lovr.graphics.getFont()
+  font:setPixelDensity()
   font:setFlipEnabled(false)
   local wrap = .7 * font:getPixelDensity()
   local width, lines = font:getWidth(message, wrap)
   local height = 2.6 + lines
   local y = math.min(height / 2, 10)
-  local function render(window)
+  local function render()
     lovr.graphics.print('Error', -width / 2, y, -20, 1.6, 0, 0, 0, 0, nil, 'left', 'top')
     lovr.graphics.print(message, -width / 2, y - 2.6, -20, 1.0, 0, 0, 0, 0, wrap, 'left', 'top')
   end
@@ -243,7 +254,7 @@ function lovr.errhand(message, traceback)
     end
     if lovr.graphics.hasWindow() then
       lovr.graphics.clear()
-      render(true)
+      render()
     end
     lovr.graphics.present()
   end

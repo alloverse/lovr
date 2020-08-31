@@ -30,7 +30,6 @@ endif()
 option(LOVR_USE_VRAPI "Enable the VrApi backend for the headset module" OFF)
 option(LOVR_USE_PICO "Enable the Pico backend for the headset module" OFF)
 option(LOVR_USE_DESKTOP_HEADSET "Enable the keyboard/mouse backend for the headset module" ON)
-option(LOVR_USE_LEAP "Enable the Leap Motion backend for the headset module" OFF)
 
 option(LOVR_SYSTEM_ENET "Use the system-provided enet" OFF)
 option(LOVR_SYSTEM_GLFW "Use the system-provided glfw" OFF)
@@ -48,13 +47,9 @@ option(LOVR_USE_THREADLOCAL "Allow use of thread local storage; disable to run o
 if(EMSCRIPTEN)
   string(CONCAT LOVR_EMSCRIPTEN_FLAGS
     "-Os "
-    "-s USE_GLFW=3 "
     "-s USE_WEBGL2=1 "
-    "-s GL_PREINITIALIZED_CONTEXT=1 "
-    "-s FULL_ES2=1 "
-    "-s FULL_ES3=1 "
     "-s FORCE_FILESYSTEM=1 "
-    "-s \"EXPORTED_FUNCTIONS=['_main','_lovrDestroy','_lovrCanvasCreateFromHandle','_lovrCanvasDestroy','_lovrGraphicsSetCamera']\" "
+    "-s \"EXPORTED_FUNCTIONS=['_main','_lovrDestroy','_webxr_attach','_webxr_detach','_lovrCanvasCreateFromHandle','_lovrCanvasDestroy','_lovrGraphicsSetCamera']\" "
     "-s \"EXTRA_EXPORTED_RUNTIME_METHODS=['getValue','setValue']\" "
     "--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/src/resources/webxr.js\" "
     "--shell-file \"${CMAKE_CURRENT_SOURCE_DIR}/src/resources/lovr.html\""
@@ -244,27 +239,19 @@ endif()
 # OpenXR
 # Currently, to use OpenXR, add the OpenXR SDK to the deps folder:
 #   git submodule add https://github.com/khronosgroup/openxr-sdk deps/openxr
+# On Android, download the Oculus OpenXR loader and place the "OpenXR" folder at "deps/OpenXR-Oculus"
 if(LOVR_ENABLE_HEADSET AND LOVR_USE_OPENXR)
   include_directories(deps/openxr/include)
-  add_subdirectory(deps/openxr openxr)
-  set(LOVR_OPENXR openxr_loader)
-endif()
-
-# Leap Motion
-if(LOVR_ENABLE_HEADSET AND LOVR_USE_LEAP)
-  if(NOT LOVR_LEAP_PATH)
-    message(FATAL_ERROR "LOVR_USE_LEAP requires the LOVR_LEAP_PATH to be set to the location of the Leap Motion SDK (LeapSDK) folder")
-  endif()
-  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(LEAP_ARCH "x64")
+  if(ANDROID)
+    set(LOVR_OPENXR_OCULUS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/OpenXR-Oculus" CACHE STRING "The path to the Oculus OpenXR loader")
+    add_library(openxr_loader SHARED IMPORTED)
+    include_directories("${LOVR_OPENXR_OCULUS_PATH}/Include")
+    set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION "${LOVR_OPENXR_OCULUS_PATH}/Libs/Android/${ANDROID_ABI}/Release/libopenxr_loader.so")
+    set(LOVR_OPENXR openxr_loader)
   else()
-    set(LEAP_ARCH "x86")
+    add_subdirectory(deps/openxr openxr)
+    set(LOVR_OPENXR openxr_loader)
   endif()
-  add_library(LeapC SHARED IMPORTED)
-  include_directories("${LOVR_LEAP_PATH}/include")
-  set_target_properties(LeapC PROPERTIES IMPORTED_IMPLIB "${LOVR_LEAP_PATH}/lib/${LEAP_ARCH}/LeapC.lib")
-  set_target_properties(LeapC PROPERTIES IMPORTED_LOCATION "${LOVR_LEAP_PATH}/lib/${LEAP_ARCH}/LeapC.dll")
-  set(LOVR_LEAP LeapC)
 endif()
 
 # Oculus SDK -- expects Oculus SDK 1.26.0 or later
@@ -375,7 +362,6 @@ target_link_libraries(lovr
   ${LOVR_OCULUS}
   ${LOVR_VRAPI}
   ${LOVR_PICO}
-  ${LOVR_LEAP}
   ${LOVR_PTHREADS}
   ${LOVR_EMSCRIPTEN_FLAGS}
 )
@@ -492,10 +478,6 @@ if(LOVR_ENABLE_HEADSET)
     add_definitions(-DLOVR_USE_DESKTOP_HEADSET)
     target_sources(lovr PRIVATE src/modules/headset/headset_desktop.c)
   endif()
-  if(LOVR_USE_LEAP)
-    add_definitions(-DLOVR_USE_LEAP)
-    target_sources(lovr PRIVATE src/modules/headset/headset_leap.c)
-  endif()
 endif()
 
 if(LOVR_ENABLE_MATH)
@@ -584,7 +566,6 @@ if(WIN32)
   move_dll(${LOVR_ODE})
   move_dll(${LOVR_OPENAL})
   move_dll(${LOVR_OPENVR})
-  move_dll(${LOVR_LEAP})
   move_dll(${LOVR_MSDF})
   target_compile_definitions(lovr PRIVATE -DLOVR_GL)
 elseif(APPLE)
@@ -648,15 +629,24 @@ elseif(ANDROID)
     # - Figure out which Java class (Activity) and AndroidManifest.xml to use
     # - Oculus uses the regular android os layer, pico implements its own in the headset backend
     # - Some of the Pico SDK is in a jar that has to be added to the classpath and dx invocation
-    # TODO error (probably way earlier) if both USE_VRAPI and USE_PICO aren't defined
-    if(LOVR_USE_VRAPI)
-      set(ANDROID_FLAVOR "vrapi")
+    # TODO error (probably way earlier) if no headset API is defined, since everything will break
+    if(LOVR_USE_OPENXR)
+      set(MANIFEST "oculus")
+      set(ACTIVITY "openxr")
+      target_sources(lovr PRIVATE src/core/os_android.c)
+      get_target_property(OPENXR_LIB ${LOVR_OPENXR} IMPORTED_LOCATION)
+      file(COPY ${OPENXR_LIB} DESTINATION lib/${ANDROID_ABI})
+      set(ANDROID_CLASSPATH "${ANDROID_JAR}")
+    elseif(LOVR_USE_VRAPI)
+      set(MANIFEST "oculus")
+      set(ACTIVITY "vrapi")
       target_sources(lovr PRIVATE src/core/os_android.c)
       get_target_property(VRAPI_LIB ${LOVR_VRAPI} IMPORTED_LOCATION)
       file(COPY ${VRAPI_LIB} DESTINATION lib/${ANDROID_ABI})
       set(ANDROID_CLASSPATH "${ANDROID_JAR}")
     elseif(LOVR_USE_PICO)
-      set(ANDROID_FLAVOR "pico")
+      set(MANIFEST "pico")
+      set(ACTIVITY "pico")
       get_target_property(PICO_LIB ${LOVR_PICO} IMPORTED_LOCATION)
       file(COPY ${PICO_LIB} DESTINATION lib/${ANDROID_ABI})
       set(EXTRA_JAR "${LOVR_PICO_PATH}/classes.jar")
@@ -667,7 +657,7 @@ elseif(ANDROID)
       endif()
     endif()
 
-    set(ANDROID_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/AndroidManifest_${ANDROID_FLAVOR}.xml" CACHE STRING "The AndroidManifest.xml file to use")
+    set(ANDROID_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/AndroidManifest_${MANIFEST}.xml" CACHE STRING "The AndroidManifest.xml file to use")
 
     # Make an apk
     add_custom_command(
@@ -676,7 +666,7 @@ elseif(ANDROID)
       BYPRODUCTS lovr.apk
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
       COMMAND ${CMAKE_COMMAND} -E copy "${ANDROID_MANIFEST}" AndroidManifest.xml
-      COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/Activity_${ANDROID_FLAVOR}.java Activity.java
+      COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/Activity_${ACTIVITY}.java Activity.java
       COMMAND ${Java_JAVAC_EXECUTABLE} -classpath "${ANDROID_CLASSPATH}" -d . Activity.java
       COMMAND ${ANDROID_TOOLS}/dx --dex --output classes.dex ${EXTRA_JAR} org/lovr/app/Activity.class
       COMMAND

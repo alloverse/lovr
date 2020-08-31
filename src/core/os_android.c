@@ -17,6 +17,7 @@ static struct {
   JNIEnv* jni;
   EGLDisplay display;
   EGLContext context;
+  EGLConfig config;
   EGLSurface surface;
   quitCallback onQuit;
   keyboardCallback onKeyboardEvent;
@@ -120,14 +121,15 @@ static int32_t onInputEvent(struct android_app* app, AInputEvent* event) {
     case AKEYCODE_PERIOD: key = KEY_PERIOD; break;
     case AKEYCODE_SLASH: key = KEY_SLASH; break;
 
-    case AKEYCODE_SHIFT_LEFT: key = KEY_LEFT_SHIFT; break;
-    case AKEYCODE_SHIFT_RIGHT: key = KEY_RIGHT_SHIFT; break;
     case AKEYCODE_CTRL_LEFT: key = KEY_LEFT_CONTROL; break;
-    case AKEYCODE_CTRL_RIGHT: key = KEY_RIGHT_CONTROL; break;
+    case AKEYCODE_SHIFT_LEFT: key = KEY_LEFT_SHIFT; break;
     case AKEYCODE_ALT_LEFT: key = KEY_LEFT_ALT; break;
+    case AKEYCODE_META_LEFT: key = KEY_LEFT_OS; break;
+    case AKEYCODE_CTRL_RIGHT: key = KEY_RIGHT_CONTROL; break;
+    case AKEYCODE_SHIFT_RIGHT: key = KEY_RIGHT_SHIFT; break;
     case AKEYCODE_ALT_RIGHT: key = KEY_RIGHT_ALT; break;
-    case AKEYCODE_META_LEFT: key = KEY_LEFT_SUPER; break;
-    case AKEYCODE_META_RIGHT: key = KEY_RIGHT_SUPER; break;
+    case AKEYCODE_META_RIGHT: key = KEY_RIGHT_OS; break;
+
     case AKEYCODE_CAPS_LOCK: key = KEY_CAPS_LOCK; break;
     case AKEYCODE_SCROLL_LOCK: key = KEY_SCROLL_LOCK; break;
     case AKEYCODE_NUM_LOCK: key = KEY_NUM_LOCK; break;
@@ -341,8 +343,8 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
     EGL_NONE
   };
 
-  EGLConfig config = 0;
-  for (EGLint i = 0; i < configCount && !config; i++) {
+  state.config = 0;
+  for (EGLint i = 0; i < configCount && state.config == 0; i++) {
     EGLint value, mask;
 
     mask = EGL_OPENGL_ES3_BIT_KHR;
@@ -357,7 +359,7 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
 
     for (size_t a = 0; a < sizeof(attributes) / sizeof(attributes[0]); a += 2) {
       if (attributes[a] == EGL_NONE) {
-        config = configs[i];
+        state.config = configs[i];
         break;
       }
 
@@ -372,7 +374,7 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
     EGL_NONE
   };
 
-  if ((state.context = eglCreateContext(state.display, config, EGL_NO_CONTEXT, contextAttributes)) == EGL_NO_CONTEXT) {
+  if ((state.context = eglCreateContext(state.display, state.config, EGL_NO_CONTEXT, contextAttributes)) == EGL_NO_CONTEXT) {
     return false;
   }
 
@@ -382,7 +384,7 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
     EGL_NONE
   };
 
-  if ((state.surface = eglCreatePbufferSurface(state.display, config, surfaceAttributes)) == EGL_NO_SURFACE) {
+  if ((state.surface = eglCreatePbufferSurface(state.display, state.config, surfaceAttributes)) == EGL_NO_SURFACE) {
     eglDestroyContext(state.display, state.context);
     return false;
   }
@@ -407,6 +409,10 @@ void lovrPlatformGetWindowSize(int* width, int* height) {
 void lovrPlatformGetFramebufferSize(int* width, int* height) {
   *width = 0;
   *height = 0;
+}
+
+void lovrPlatformSetSwapInterval(int interval) {
+  //
 }
 
 void lovrPlatformSwapBuffers() {
@@ -481,6 +487,10 @@ EGLDisplay lovrPlatformGetEGLDisplay() {
 
 EGLContext lovrPlatformGetEGLContext() {
   return state.context;
+}
+
+EGLContext lovrPlatformGetEGLConfig() {
+  return state.config;
 }
 
 EGLSurface lovrPlatformGetEGLSurface() {
