@@ -226,7 +226,7 @@ static struct {
   void* renderUserdata;
 } state;
 
-static bool pico_init(float offset, uint32_t msaa) {
+static bool pico_init(float supersample, float offset, uint32_t msaa) {
   state.offset = offset;
   state.clipNear = .1f;
   state.clipFar = 100.f;
@@ -271,8 +271,9 @@ static uint32_t pico_getViewCount(void) {
 }
 
 static bool pico_getViewPose(uint32_t view, float* position, float* orientation) {
-  // TODO use HmdState pose info, offset view by half ipd
+  vec3_init(position, state.headPosition);
   quat_init(orientation, state.headOrientation);
+  position[1] += state.offset;
   return view < 2;
 }
 
@@ -574,21 +575,22 @@ JNIEXPORT void JNICALL Java_org_lovr_app_Activity_lovrPicoDrawEye(JNIEnv* jni, j
     arr_push(&state.canvases, ((NativeCanvas) { .id = framebuffer, .instance = canvas }));
   }
 
-  Camera camera;
-  camera.stereo = false;
-  camera.canvas = canvas;
   for (uint32_t i = 0; i < 2; i++) {
-    float fov = tanf(state.fov);
-    mat4_fov(camera.projection[i], -fov, fov, fov, -fov, state.clipNear, state.clipFar);
-    mat4_identity(camera.viewMatrix[i]);
-    mat4_translate(camera.viewMatrix[i], state.headPosition[0], state.headPosition[1] + state.offset, state.headPosition[2]);
-    mat4_rotateQuat(camera.viewMatrix[i], state.headOrientation);
-    mat4_translate(camera.viewMatrix[i], state.ipd * (eye == 0 ? -.5f : .5f), 0.f, 0.f);
-    mat4_invert(camera.viewMatrix[i]);
+    float view[16];
+    mat4_identity(view);
+    mat4_translate(view, state.headPosition[0], state.headPosition[1] + state.offset, state.headPosition[2]);
+    mat4_rotateQuat(view, state.headOrientation);
+    mat4_translate(view, state.ipd * (eye == 0 ? -.5f : .5f), 0.f, 0.f);
+    mat4_invert(view);
+    lovrGraphicsSetViewMatrix(i, view);
+
+    float projection[16];
+    mat4_fov(projection, state.fov, state.fov, state.fov, state.fov, state.clipNear, state.clipFar);
+    lovrGraphicsSetProjection(i, projection);
   }
 
   lovrGpuResetState();
-  lovrGraphicsSetCamera(&camera, true);
+  lovrGraphicsSetBackbuffer(canvas, false, true);
   state.renderCallback(state.renderUserdata);
-  lovrGraphicsSetCamera(NULL, false);
+  lovrGraphicsSetBackbuffer(NULL, false, false);
 }

@@ -21,6 +21,7 @@
 #pragma clang diagnostic pop
 
 #define GL_SRGB8_ALPHA8 0x8C43
+#define VRAPI_DEVICE_TYPE_OCULUSGO 64
 
 // Private platform functions
 JNIEnv* lovrPlatformGetJNI(void);
@@ -36,6 +37,7 @@ static struct {
   ovrDeviceType deviceType;
   uint64_t frameIndex;
   double displayTime;
+  float supersample;
   float offset;
   uint32_t msaa;
   ovrVector3f* rawBoundaryPoints;
@@ -55,11 +57,13 @@ static struct {
   float hapticDuration[2];
 } state;
 
-static bool vrapi_init(float offset, uint32_t msaa) {
+static bool vrapi_init(float supersample, float offset, uint32_t msaa) {
   ANativeActivity* activity = lovrPlatformGetActivity();
+  JNIEnv* jni = lovrPlatformGetJNI();
   state.java.Vm = activity->vm;
   state.java.ActivityObject = activity->clazz;
-  state.java.Env = lovrPlatformGetJNI();
+  state.java.Env = jni;
+  state.supersample = supersample;
   state.offset = offset;
   state.msaa = msaa;
   const ovrInitParms config = vrapi_DefaultInitParms(&state.java);
@@ -85,7 +89,7 @@ static void vrapi_destroy() {
 }
 
 static bool vrapi_getName(char* buffer, size_t length) {
-  switch (state.deviceType) {
+  switch ((int) state.deviceType) {
     case VRAPI_DEVICE_TYPE_OCULUSGO: strncpy(buffer, "Oculus Go", length - 1); break;
     case VRAPI_DEVICE_TYPE_OCULUSQUEST: strncpy(buffer, "Oculus Quest", length - 1); break;
     default: return false;
@@ -125,6 +129,7 @@ static bool vrapi_getViewPose(uint32_t view, float* position, float* orientation
   ovrTracking2 tracking = vrapi_GetPredictedTracking2(state.session, state.displayTime);
   float transform[16];
   mat4_init(transform, (float*) &tracking.Eye[view].ViewMatrix);
+  mat4_transpose(transform);
   mat4_invert(transform);
   mat4_getPosition(transform, position);
   mat4_getOrientation(transform, orientation);
@@ -134,8 +139,11 @@ static bool vrapi_getViewPose(uint32_t view, float* position, float* orientation
 
 static bool vrapi_getViewAngles(uint32_t view, float* left, float* right, float* up, float* down) {
   if (view >= 2) return false;
+  float projection[16];
   ovrTracking2 tracking = vrapi_GetPredictedTracking2(state.session, state.displayTime);
-  ovrMatrix4f_ExtractFov(&tracking.Eye[view].ProjectionMatrix, left, right, up, down);
+  mat4_init(projection, (float*) &tracking.Eye[view].ProjectionMatrix);
+  mat4_transpose(projection);
+  mat4_getFov(projection, left, right, up, down);
   uint32_t mask = VRAPI_TRACKING_STATUS_POSITION_VALID | VRAPI_TRACKING_STATUS_ORIENTATION_VALID;
   return (tracking.Status & mask) == mask;
 }
@@ -390,6 +398,20 @@ static bool vrapi_getSkeleton(Device device, float* poses) {
   memcpy(poses + 0, &handPose->RootPose.Position.x, 3 * sizeof(float));
   memcpy(poses + 4, &handPose->RootPose.Orientation.x, 4 * sizeof(float));
 
+  float rotation[4];
+  if (index == 0) {
+    float q[4];
+    quat_fromAngleAxis(rotation, (float) M_PI, 0.f, 0.f, 1.f);
+    quat_mul(rotation, rotation, quat_fromAngleAxis(q, (float) M_PI / 2.f, 0.f, 1.f, 0.f));
+  } else {
+    quat_fromAngleAxis(rotation, (float) M_PI / 2.f, 0.f, 1.f, 0.f);
+  }
+
+  for (uint32_t i = 0; i < HAND_JOINT_COUNT; i++) {
+    float* pose = &poses[i * 8];
+    quat_mul(pose + 4, pose + 4, rotation);
+  }
+
   return true;
 }
 
@@ -621,6 +643,8 @@ static void vrapi_renderTo(void (*callback)(void*), void* userdata) {
 
     uint32_t width, height;
     vrapi_getDisplayDimensions(&width, &height);
+    width *= state.supersample;
+    height *= state.supersample;
     state.swapchain = vrapi_CreateTextureSwapChain3(VRAPI_TEXTURE_TYPE_2D_ARRAY, GL_SRGB8_ALPHA8, width, height, 1, 3);
     state.swapchainLength = vrapi_GetTextureSwapChainLength(state.swapchain);
     lovrAssert(state.swapchainLength <= sizeof(state.canvases) / sizeof(state.canvases[0]), "VrApi: The swapchain is too long");
@@ -636,22 +660,25 @@ static void vrapi_renderTo(void (*callback)(void*), void* userdata) {
 
   ovrTracking2 tracking = vrapi_GetPredictedTracking2(state.session, state.displayTime);
 
-  // Set up camera
-  Camera camera;
-  camera.canvas = state.canvases[state.swapchainIndex];
+  // Camera
   for (uint32_t i = 0; i < 2; i++) {
-    mat4_init(camera.viewMatrix[i], &tracking.Eye[i].ViewMatrix.M[0][0]);
-    mat4_init(camera.projection[i], &tracking.Eye[i].ProjectionMatrix.M[0][0]);
-    mat4_transpose(camera.projection[i]);
-    mat4_transpose(camera.viewMatrix[i]);
-    mat4_translate(camera.viewMatrix[i], 0.f, -state.offset, 0.f);
+    float view[16];
+    mat4_init(view, &tracking.Eye[i].ViewMatrix.M[0][0]);
+    mat4_transpose(view);
+    view[13] -= state.offset;
+    lovrGraphicsSetViewMatrix(i, view);
+
+    float projection[16];
+    mat4_init(projection, &tracking.Eye[i].ProjectionMatrix.M[0][0]);
+    mat4_transpose(projection);
+    lovrGraphicsSetProjection(i, projection);
   }
 
   // Render
-  lovrGraphicsSetCamera(&camera, true);
+  lovrGraphicsSetBackbuffer(state.canvases[state.swapchainIndex], true, true);
   callback(userdata);
   lovrGraphicsDiscard(false, true, true);
-  lovrGraphicsSetCamera(NULL, false);
+  lovrGraphicsSetBackbuffer(NULL, false, false);
 
   // Submit a layer to VrApi
   ovrLayerProjection2 layer = vrapi_DefaultLayerProjection2();

@@ -90,7 +90,7 @@ static int32_t onInputEvent(struct android_app* app, AInputEvent* event) {
     case AKEYCODE_DPAD_DOWN: key = KEY_DOWN; break;
     case AKEYCODE_DPAD_LEFT: key = KEY_LEFT; break;
     case AKEYCODE_DPAD_RIGHT: key = KEY_RIGHT; break;
-    case AKEYCODE_HOME: key = KEY_HOME; break;
+    case AKEYCODE_MOVE_HOME: key = KEY_HOME; break;
     case AKEYCODE_MOVE_END: key = KEY_END; break;
     case AKEYCODE_PAGE_UP: key = KEY_PAGE_UP; break;
     case AKEYCODE_PAGE_DOWN: key = KEY_PAGE_DOWN; break;
@@ -152,6 +152,8 @@ static int32_t onInputEvent(struct android_app* app, AInputEvent* event) {
     if (codepoint > 0) {
       state.onTextEvent(codepoint);
     }
+    (*state.jni)->DeleteLocalRef(state.jni, jevent);
+    (*state.jni)->DeleteLocalRef(state.jni, jKeyEvent);
   }
 
   return 1;
@@ -295,20 +297,24 @@ size_t lovrPlatformGetBundlePath(char* buffer, size_t size, const char** root) {
   jclass class = (*state.jni)->GetObjectClass(state.jni, activity);
   jmethodID getPackageCodePath = (*state.jni)->GetMethodID(state.jni, class, "getPackageCodePath", "()Ljava/lang/String;");
   if (!getPackageCodePath) {
+    (*state.jni)->DeleteLocalRef(state.jni, class);
     return 0;
   }
 
   jstring jpath = (*state.jni)->CallObjectMethod(state.jni, activity, getPackageCodePath);
+  (*state.jni)->DeleteLocalRef(state.jni, class);
   if ((*state.jni)->ExceptionOccurred(state.jni)) {
     (*state.jni)->ExceptionClear(state.jni);
     return 0;
   }
 
-  const char* path = (*state.jni)->GetStringUTFChars(state.jni, jpath, NULL);
-  size_t length = strlen(path);
+  size_t length = (*state.jni)->GetStringUTFLength(state.jni, jpath);
   if (length >= size) return 0;
+
+  const char* path = (*state.jni)->GetStringUTFChars(state.jni, jpath, NULL);
   memcpy(buffer, path, length);
   buffer[length] = '\0';
+  (*state.jni)->ReleaseStringUTFChars(state.jni, jpath, path);
   *root = "/assets";
   return length;
 }
@@ -371,6 +377,7 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
 
   EGLint contextAttributes[] = {
     EGL_CONTEXT_CLIENT_VERSION, 3,
+    EGL_CONTEXT_OPENGL_DEBUG, flags->debug,
     EGL_NONE
   };
 

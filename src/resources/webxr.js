@@ -7,7 +7,7 @@ var webxr = {
       left: [0, 3, null, 1, null, null, null, 4, 5],
       right: [0, 3, null, 1, null, 4, 5, null, null],
     },
-    'valve-index': [0, 3, 2, 1, null, 4, null, 4, null],
+    'valve-index': [0, 3, 2, 1, null, 4, null],
     'microsoft-mixed-reality': [0, 3, 2, 1],
     'htc-vive': [0, null, 2, 1],
     'generic-trigger': [0],
@@ -48,7 +48,7 @@ var webxr = {
   },
 
   webxr_init__deps: ['$buttons', '$axes'],
-  webxr_init: function(offset, msaa) {
+  webxr_init: function(supersample, offset, msaa) {
     if (!navigator.xr) {
       return false;
     }
@@ -73,7 +73,7 @@ var webxr = {
           state.boundsGeometry = 0; /* NULL */
           state.boundsGeometryCount = 0;
           state.layer = new XRWebGLLayer(session, Module.ctx);
-          state.updateRenderState({ baseLayer: state.layer });
+          state.session.updateRenderState({ baseLayer: state.layer });
           state.fbo = GL.getNewId(GL.framebuffers);
           GL.framebuffers[state.fbo] = state.layer.framebuffer;
 
@@ -87,12 +87,6 @@ var webxr = {
           state.canvas = Module['_lovrCanvasCreateFromHandle'](width, height, flags, state.fbo, 0, 0, 1, true);
           Module.stackRestore(flags);
 
-          // Camera
-          var sizeof_Camera = 264;
-          state.camera = Module._malloc(sizeof_Camera);
-          HEAPU8[state.camera + 0] = 1; // state.camera.stereo = true
-          HEAPU32[(state.camera + 4) >> 2] = state.canvas; // state.camera.canvas = state.canvas
-
           state.hands = [];
           state.lastButtonState = [];
           session.addEventListener('inputsourceschange', function(event) {
@@ -100,7 +94,7 @@ var webxr = {
             session.inputSources.forEach(function(inputSource) {
               state.hands[({ left: 1, right: 2 })[inputSource.handedness]] = inputSource;
 
-              var profile = inputSource.profiles.find(function(profile) { return mappings[profile]; });
+              var profile = inputSource.profiles.find(function(profile) { return buttons[profile]; });
 
               if (!inputSource.gamepad || !profile) {
                 inputSource.buttons = [];
@@ -118,7 +112,6 @@ var webxr = {
 
           session.addEventListener('end', function() {
             Module._free(state.boundsGeometry|0);
-            Module._free(state.camera|0);
 
             if (state.canvas) {
               Module['_lovrCanvasDestroy'](state.canvas);
@@ -150,7 +143,7 @@ var webxr = {
               fn();
               state.hands.forEach(function(inputSource, i) {
                 state.lastButtonState[i] = inputSource && inputSource.buttons.map(function(button) {
-                  return button.pressed;
+                  return button && button.pressed;
                 });
               });
             });
@@ -162,7 +155,7 @@ var webxr = {
     };
 
     Module.lovr.exitVR = function() {
-      return session ? session.end() : Promise.resolve();
+      return state.session ? state.session.end() : Promise.resolve();
     };
 
     // WebXR is not set as the display driver immediately, it uses webxr_attach to make itself the
@@ -202,7 +195,7 @@ var webxr = {
   },
 
   webxr_getViewCount: function() {
-    return state.viewer.views.length;
+    return state.viewer ? state.viewer.views.length : 0;
   },
 
   webxr_getViewPose__deps: ['$writePose'],
@@ -224,7 +217,7 @@ var webxr = {
   webxr_setClipDistance: function(clipNear, clipFar) {
     state.clipNear = clipNear;
     state.clipFar = clipFar;
-    state.updateRenderState({
+    state.session.updateRenderState({
       clipNear: clipNear,
       clipFar: clipFar
     });
@@ -265,8 +258,8 @@ var webxr = {
   webxr_getPose__deps: ['$writePose'],
   webxr_getPose: function(device, position, orientation) {
     if (device === 0 /* DEVICE_HEAD */) {
-      writePose(state.viewer.transform, position, orientation);
-      return true;
+      state.viewer && writePose(state.viewer.transform, position, orientation);
+      return !!state.viewer;
     }
 
     if (state.hands[device]) {
@@ -284,16 +277,16 @@ var webxr = {
   },
 
   webxr_isDown: function(device, button, down, changed) {
-    var button = state.hands[device] && state.hands[device].button;
-    HEAPU32[down >> 2] = button && button.pressed;
-    HEAPU32[changed >> 2] = button && (state.lastButtonState[device][button] ^ button.pressed);
-    return !!button;
+    var b = state.hands[device] && state.hands[device].buttons[button];
+    HEAPU8[down] = b && b.pressed;
+    HEAPU8[changed] = b && (state.lastButtonState[device][button] ^ b.pressed);
+    return !!b;
   },
 
   webxr_isTouched: function(device, button, touched) {
-    var button = state.hands[device] && state.hands[device].button;
-    HEAPU32[touched >> 2] = button && button.touched;
-    return !!button;
+    var b = state.hands[device] && state.hands[device].buttons[button];
+    HEAPU8[touched] = b && b.touched;
+    return !!b;
   },
 
   webxr_getAxis: function(device, axis, value) {
@@ -310,13 +303,13 @@ var webxr = {
         return !!hand.buttons[axis];
 
       case 1: /* AXIS_THUMBSTICK */
-        HEAPF32[value >> 2 + 0] = hand.gamepad.axes[2];
-        HEAPF32[value >> 2 + 1] = hand.gamepad.axes[3];
+        HEAPF32[(value >> 2) + 0] = hand.gamepad.axes[2];
+        HEAPF32[(value >> 2) + 1] = hand.gamepad.axes[3];
         return hand.axes.thumbstick;
 
       case 2: /* AXIS_TOUCHPAD */
-        HEAPF32[value >> 2 + 0] = hand.gamepad.axes[0];
-        HEAPF32[value >> 2 + 1] = hand.gamepad.axes[1];
+        HEAPF32[(value >> 2) + 0] = hand.gamepad.axes[0];
+        HEAPF32[(value >> 2) + 1] = hand.gamepad.axes[1];
         return hand.axes.touchpad;
 
       default: return false;
@@ -365,16 +358,27 @@ var webxr = {
   },
 
   webxr_renderTo: function(callback, userdata) {
-    var views = state.viewer.views;
-    var matrices = (state.camera + 8) >> 2;
-    HEAPF32.set(views[0].transform.inverse.matrix, matrices + 0);
-    HEAPF32.set(views[1].transform.inverse.matrix, matrices + 16);
-    HEAPF32.set(views[0].projectionMatrix, matrices + 32);
-    HEAPF32.set(views[1].projectionMatrix, matrices + 48);
-
-    Module['_lovrGraphicsSetCamera'](state.camera, true);
-    Module['dynCall_vi'](callback, userdata);
-    Module['_lovrGraphicsSetCamera'](0, false);
+    var matrix = Module.stackAlloc(16 * 4);
+    if (state.viewer) {
+      var views = state.viewer.views;
+      HEAPF32.set(views[0].transform.inverse.matrix, matrix >> 2);
+      Module._lovrGraphicsSetViewMatrix(0, matrix);
+      HEAPF32.set(views[1].transform.inverse.matrix, matrix >> 2);
+      Module._lovrGraphicsSetViewMatrix(1, matrix);
+      HEAPF32.set(views[0].projectionMatrix, matrix >> 2);
+      Module._lovrGraphicsSetProjection(0, matrix);
+      HEAPF32.set(views[1].projectionMatrix, matrix >> 2);
+      Module._lovrGraphicsSetProjection(1, matrix);
+    } else {
+      HEAPF32.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], matrix >> 2);
+      Module._lovrGraphicsSetViewMatrix(0, matrix);
+      Module._lovrGraphicsSetViewMatrix(1, matrix);
+      // TODO projection?
+    }
+    Module.stackRestore(matrix);
+    Module._lovrGraphicsSetBackbuffer(state.canvas, true, true);
+    Module.dynCall_vi(callback, userdata);
+    Module._lovrGraphicsSetBackbuffer(0, false, false);
   },
 
   webxr_update: function(dt) {

@@ -1245,7 +1245,7 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
 #endif
 
 #ifndef LOVR_WEBGL
-  if (debug && GLAD_GL_KHR_debug) {
+  if (debug && (GLAD_GL_KHR_debug || GLAD_GL_ES_VERSION_3_2)) {
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     glDebugMessageCallback(onMessage, NULL);
   }
@@ -1254,7 +1254,7 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
   state.features.dxt = GLAD_GL_EXT_texture_compression_s3tc;
   state.features.instancedStereo = GLAD_GL_ARB_viewport_array && GLAD_GL_AMD_vertex_shader_viewport_index && GLAD_GL_ARB_fragment_layer_viewport;
   state.features.multiview = GLAD_GL_ES_VERSION_3_0 && GLAD_GL_OVR_multiview2 && GLAD_GL_OVR_multiview_multisampled_render_to_texture;
-  state.features.timers = GLAD_GL_VERSION_3_3 || GLAD_GL_EXT_disjoint_timer_query;
+  state.features.timers = GLAD_GL_VERSION_3_3;
 #ifdef LOVR_GL
   glEnable(GL_LINE_SMOOTH);
   glEnable(GL_PROGRAM_POINT_SIZE);
@@ -1262,6 +1262,12 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 #endif
   glGetFloatv(GL_POINT_SIZE_RANGE, state.limits.pointSizes);
+
+  if (state.features.compute) {
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, &state.limits.compute[0]);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1, &state.limits.compute[1]);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2, &state.limits.compute[2]);
+  }
 
   if (state.features.multiview) {
     state.singlepass = MULTIVIEW;
@@ -1395,6 +1401,9 @@ void lovrGpuCompute(Shader* shader, int x, int y, int z) {
 #else
   lovrAssert(state.features.compute, "Compute shaders are not supported on this system");
   lovrAssert(shader->type == SHADER_COMPUTE, "Attempt to use a non-compute shader for a compute operation");
+  lovrAssert(x <= state.limits.compute[0], "Compute x size %d exceeds the maximum of %d", state.limits.compute[0]);
+  lovrAssert(y <= state.limits.compute[1], "Compute y size %d exceeds the maximum of %d", state.limits.compute[1]);
+  lovrAssert(z <= state.limits.compute[2], "Compute z size %d exceeds the maximum of %d", state.limits.compute[2]);
   lovrGraphicsFlush();
   lovrGpuBindShader(shader);
   glDispatchCompute(x, y, z);
@@ -1537,7 +1546,7 @@ void lovrGpuResetState() {
 }
 
 void lovrGpuTick(const char* label) {
-#ifndef LOVR_WEBGL
+#ifdef LOVR_GL
   lovrAssert(state.activeTimer == ~0u, "Attempt to start a new GPU timer while one is already active!");
   QueryPool* pool = &state.queryPool;
   uint64_t hash = hash64(label, strlen(label));
@@ -1590,7 +1599,7 @@ void lovrGpuTick(const char* label) {
 }
 
 double lovrGpuTock(const char* label) {
-#ifndef LOVR_WEBGL
+#ifdef LOVR_GL
   QueryPool* pool = &state.queryPool;
   uint64_t hash = hash64(label, strlen(label));
   uint64_t index = map_get(&state.timerMap, hash);
@@ -2282,17 +2291,13 @@ void lovrBufferUnmap(Buffer* buffer) {
 
 void lovrBufferDiscard(Buffer* buffer) {
   lovrAssert(!buffer->readable, "Readable Buffers can not be discarded");
+  lovrAssert(!buffer->mapped, "Mapped Buffers can not be discarded");
   lovrGpuBindBuffer(buffer->type, buffer->id);
   GLenum glType = convertBufferType(buffer->type);
 #ifdef LOVR_WEBGL
   glBufferData(glType, buffer->size, NULL, convertBufferUsage(buffer->usage));
 #else
-  if (buffer->mapped) {
-    glUnmapBuffer(glType);
-    buffer->mapped = false;
-  }
-
-  GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
+  GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
   buffer->data = glMapBufferRange(glType, 0, buffer->size, flags);
   buffer->mapped = true;
 #endif

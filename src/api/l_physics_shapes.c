@@ -7,6 +7,7 @@ void luax_pushshape(lua_State* L, Shape* shape) {
     case SHAPE_BOX: luax_pushtype(L, BoxShape, shape); break;
     case SHAPE_CAPSULE: luax_pushtype(L, CapsuleShape, shape); break;
     case SHAPE_CYLINDER: luax_pushtype(L, CylinderShape, shape); break;
+    case SHAPE_MESH: luax_pushtype(L, MeshShape, shape); break;
     default: lovrThrow("Unreachable");
   }
 }
@@ -19,7 +20,8 @@ Shape* luax_checkshape(lua_State* L, int index) {
       hash64("SphereShape", strlen("SphereShape")),
       hash64("BoxShape", strlen("BoxShape")),
       hash64("CapsuleShape", strlen("CapsuleShape")),
-      hash64("CylinderShape", strlen("CylinderShape"))
+      hash64("CylinderShape", strlen("CylinderShape")),
+      hash64("MeshShape", strlen("MeshShape")),
     };
 
     for (size_t i = 0; i < sizeof(hashes) / sizeof(hashes[0]); i++) {
@@ -41,7 +43,7 @@ static int l_lovrShapeDestroy(lua_State* L) {
 
 static int l_lovrShapeGetType(lua_State* L) {
   Shape* shape = luax_checkshape(L, 1);
-  luax_pushenum(L, ShapeTypes, lovrShapeGetType(shape));
+  luax_pushenum(L, ShapeType, lovrShapeGetType(shape));
   return 1;
 }
 
@@ -296,5 +298,10 @@ const luaL_Reg lovrCylinderShape[] = {
   { "setRadius", l_lovrCylinderShapeSetRadius },
   { "getLength", l_lovrCylinderShapeGetLength },
   { "setLength", l_lovrCylinderShapeSetLength },
+  { NULL, NULL }
+};
+
+const luaL_Reg lovrMeshShape[] = {
+  lovrShape,
   { NULL, NULL }
 };

@@ -83,6 +83,7 @@ static struct {
   float boundsGeometry[16];
   float clipNear;
   float clipFar;
+  float supersample;
   float offset;
   int msaa;
 } state;
@@ -97,7 +98,7 @@ static TrackedDeviceIndex_t getDeviceIndex(Device device) {
 }
 
 static bool openvr_getName(char* name, size_t length);
-static bool openvr_init(float offset, uint32_t msaa) {
+static bool openvr_init(float supersample, float offset, uint32_t msaa) {
   if (!VR_IsHmdPresent() || !VR_IsRuntimeInstalled()) {
     return false;
   }
@@ -206,7 +207,8 @@ static bool openvr_init(float offset, uint32_t msaa) {
   state.input->GetInputSourceHandle("/user/hand/right", &state.inputSources[DEVICE_HAND_RIGHT]);
 
   state.clipNear = 0.1f;
-  state.clipFar = 30.f;
+  state.clipFar = 100.f;
+  state.supersample = supersample;
   state.offset = state.compositor->GetTrackingSpace() == ETrackingUniverseOrigin_TrackingUniverseStanding ? 0. : offset;
   state.msaa = msaa;
 
@@ -285,6 +287,7 @@ static bool openvr_getViewPose(uint32_t view, float* position, float* orientatio
   mat4_multiply(transform, mat4_fromMat34(offset, state.system->GetEyeToHeadTransform(eye).m));
   mat4_getPosition(transform, position);
   mat4_getOrientation(transform, orientation);
+  position[1] += state.offset;
 
   return view < 2;
 }
@@ -357,7 +360,7 @@ static bool openvr_getPose(Device device, vec3 position, quat orientation) {
 
   if (device == DEVICE_HAND_LEFT || device == DEVICE_HAND_RIGHT) {
     InputPoseActionData_t action;
-    state.input->GetPoseActionData(state.poseActions[device], state.compositor->GetTrackingSpace(), 0.f, &action, sizeof(action), 0);
+    state.input->GetPoseActionDataForNextFrame(state.poseActions[device], state.compositor->GetTrackingSpace(), &action, sizeof(action), 0);
     mat4_fromMat34(transform, action.pose.mDeviceToAbsoluteTracking.m);
     transform[13] += state.offset;
     mat4_getPosition(transform, position);
@@ -375,7 +378,7 @@ static bool openvr_getVelocity(Device device, vec3 velocity, vec3 angularVelocit
   if (device == DEVICE_HEAD) {
     pose = &state.renderPoses[k_unTrackedDeviceIndex_Hmd];
   } else if (device == DEVICE_HAND_LEFT || device == DEVICE_HAND_RIGHT) {
-    state.input->GetPoseActionData(state.poseActions[device], state.compositor->GetTrackingSpace(), 0.f, &action, sizeof(action), 0);
+    state.input->GetPoseActionDataForNextFrame(state.poseActions[device], state.compositor->GetTrackingSpace(), &action, sizeof(action), 0);
     pose = &action.pose;
   } else {
     return false;
@@ -427,7 +430,7 @@ static bool openvr_getSkeleton(Device device, float* poses) {
 
   // Bone transforms are relative to the hand instead of the origin, so get the hand pose first
   InputPoseActionData_t handPose;
-  state.input->GetPoseActionData(state.poseActions[device], state.compositor->GetTrackingSpace(), 0.f, &handPose, sizeof(handPose), 0);
+  state.input->GetPoseActionDataForNextFrame(state.poseActions[device], state.compositor->GetTrackingSpace(), &handPose, sizeof(handPose), 0);
   if (!handPose.pose.bPoseIsValid) {
     return false;
   }
@@ -761,6 +764,8 @@ static void openvr_renderTo(void (*callback)(void*), void* userdata) {
   if (!state.canvas) {
     uint32_t width, height;
     openvr_getDisplayDimensions(&width, &height);
+    width *= state.supersample;
+    height *= state.supersample;
     CanvasFlags flags = { .depth = { true, false, FORMAT_D24S8 }, .stereo = true, .mipmaps = true, .msaa = state.msaa };
     state.canvas = lovrCanvasCreate(width, height, flags);
     Texture* texture = lovrTextureCreate(TEXTURE_2D, NULL, 0, true, true, state.msaa);
@@ -771,23 +776,23 @@ static void openvr_renderTo(void (*callback)(void*), void* userdata) {
     lovrPlatformSetSwapInterval(0);
   }
 
-  Camera camera = { .canvas = state.canvas };
-
   float head[16];
   mat4_fromMat34(head, state.renderPoses[k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m);
 
   for (int i = 0; i < 2; i++) {
-    float eye[16];
+    float matrix[16], eye[16];
     EVREye vrEye = (i == 0) ? EVREye_Eye_Left : EVREye_Eye_Right;
-    mat4_fromMat44(camera.projection[i], state.system->GetProjectionMatrix(vrEye, state.clipNear, state.clipFar).m);
-    mat4_init(camera.viewMatrix[i], head);
-    mat4_multiply(camera.viewMatrix[i], mat4_fromMat34(eye, state.system->GetEyeToHeadTransform(vrEye).m));
-    mat4_invert(camera.viewMatrix[i]);
+    mat4_init(matrix, head);
+    mat4_multiply(matrix, mat4_fromMat34(eye, state.system->GetEyeToHeadTransform(vrEye).m));
+    mat4_invert(matrix);
+    lovrGraphicsSetViewMatrix(i, matrix);
+    mat4_fromMat44(matrix, state.system->GetProjectionMatrix(vrEye, state.clipNear, state.clipFar).m);
+    lovrGraphicsSetProjection(i, matrix);
   }
 
-  lovrGraphicsSetCamera(&camera, true);
+  lovrGraphicsSetBackbuffer(state.canvas, true, true);
   callback(userdata);
-  lovrGraphicsSetCamera(NULL, false);
+  lovrGraphicsSetBackbuffer(NULL, false, false);
 
   // Submit
   const Attachment* attachments = lovrCanvasGetAttachments(state.canvas, NULL);

@@ -86,7 +86,6 @@ EGLConfig lovrPlatformGetEGLConfig(void);
   X(xrGetActionStateFloat)\
   X(xrSyncActions)\
   X(xrApplyHapticFeedback)\
-  X(xrGetVisibilityMaskKHR)\
   X(xrCreateHandTrackerEXT)\
   X(xrDestroyHandTrackerEXT)\
   X(xrLocateHandJointsEXT)
@@ -110,8 +109,8 @@ static struct {
   XrCompositionLayerProjection layers[1];
   XrCompositionLayerProjectionView layerViews[2];
   XrFrameState frameState;
-  Canvas* canvas;
-  Texture* textures[MAX_IMAGES];
+  Canvas* canvases[MAX_IMAGES];
+  uint32_t imageIndex;
   uint32_t imageCount;
   uint32_t msaa;
   uint32_t width;
@@ -124,7 +123,6 @@ static struct {
   XrHandTrackerEXT handTrackers[2];
   struct {
     bool handTracking;
-    bool visibilityMask;
   } features;
 } state;
 
@@ -148,7 +146,7 @@ static bool hasExtension(XrExtensionProperties* extensions, uint32_t count, cons
 
 static void openxr_destroy();
 
-static bool openxr_init(float offset, uint32_t msaa) {
+static bool openxr_init(float supersample, float offset, uint32_t msaa) {
   state.msaa = msaa;
 
 #ifdef __ANDROID__
@@ -190,11 +188,6 @@ static bool openxr_init(float offset, uint32_t msaa) {
     if (hasExtension(extensions, extensionCount, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
       enabledExtensionNames[enabledExtensionCount++] = XR_EXT_HAND_TRACKING_EXTENSION_NAME;
       state.features.handTracking = true;
-    }
-
-    if (hasExtension(extensions, extensionCount, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME)) {
-      enabledExtensionNames[enabledExtensionCount++] = XR_KHR_VISIBILITY_MASK_EXTENSION_NAME;
-      state.features.visibilityMask = true;
     }
 
     free(extensions);
@@ -261,8 +254,8 @@ static bool openxr_init(float offset, uint32_t msaa) {
       return false;
     }
 
-    state.width = views[0].recommendedImageRectWidth;
-    state.height = views[0].recommendedImageRectHeight;
+    state.width = MIN(views[0].recommendedImageRectWidth * supersample, views[0].maxImageRectWidth);
+    state.height = MIN(views[0].recommendedImageRectHeight * supersample, views[0].maxImageRectHeight);
   }
 
   { // Actions
@@ -434,8 +427,12 @@ static bool openxr_init(float offset, uint32_t msaa) {
     XR_INIT(xrCreateSwapchain(state.session, &info, &state.swapchain));
     XR_INIT(xrEnumerateSwapchainImages(state.swapchain, MAX_IMAGES, &state.imageCount, (XrSwapchainImageBaseHeader*) images));
 
+    CanvasFlags flags = { .depth = { true, false, FORMAT_D24S8 }, .stereo = true, .mipmaps = false, .msaa = state.msaa };
     for (uint32_t i = 0; i < state.imageCount; i++) {
-      state.textures[i] = lovrTextureCreateFromHandle(images[i].image, textureType, arraySize, state.msaa);
+      Texture* texture = lovrTextureCreateFromHandle(images[i].image, textureType, arraySize, state.msaa);
+      state.canvases[i] = lovrCanvasCreate(state.width, state.height, flags);
+      lovrCanvasSetAttachments(state.canvases[i], &(Attachment) { texture, 0, 0 }, 1);
+      lovrRelease(Texture, texture);
     }
 
     // Pre-init composition layer
@@ -465,14 +462,14 @@ static bool openxr_init(float offset, uint32_t msaa) {
   state.clipFar = 100.f;
 
   state.frameState.type = XR_TYPE_FRAME_STATE;
+  lovrPlatformSetSwapInterval(0);
 
   return true;
 }
 
 static void openxr_destroy(void) {
-  lovrRelease(Canvas, state.canvas);
   for (uint32_t i = 0; i < state.imageCount; i++) {
-    lovrRelease(Texture, state.textures[i]);
+    lovrRelease(Canvas, state.canvases[i]);
   }
 
   for (size_t i = 0; i < MAX_ACTIONS; i++) {
@@ -788,43 +785,31 @@ static void openxr_renderTo(void (*callback)(void*), void* userdata) {
   XR(xrBeginFrame(state.session, &beginInfo));
 
   if (state.frameState.shouldRender) {
-    uint32_t imageIndex;
-    XR(xrAcquireSwapchainImage(state.swapchain, NULL, &imageIndex));
+    XR(xrAcquireSwapchainImage(state.swapchain, NULL, &state.imageIndex));
     XrSwapchainImageWaitInfo waitInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = 1e9 };
 
     if (XR(xrWaitSwapchainImage(state.swapchain, &waitInfo)) != XR_TIMEOUT_EXPIRED) {
-      if (!state.canvas) {
-        CanvasFlags flags = { .depth = { true, false, FORMAT_D24S8 }, .stereo = true, .mipmaps = false, .msaa = state.msaa };
-        state.canvas = lovrCanvasCreate(state.width, state.height, flags);
-        lovrPlatformSetSwapInterval(0);
-      }
-
-      Camera camera = { .canvas = state.canvas, .stereo = true };
-
       uint32_t count;
       XrView views[2];
       getViews(views, &count);
 
       for (int eye = 0; eye < 2; eye++) {
+        float viewMatrix[16];
         XrView* view = &views[eye];
-        XrVector3f* v = &view->pose.position;
-        XrQuaternionf* q = &view->pose.orientation;
+        mat4_fromQuat(viewMatrix, &view->pose.orientation.x);
+        memcpy(viewMatrix, &view->pose.position.x, 3 * sizeof(float));
+        mat4_invert(viewMatrix);
+        lovrGraphicsSetViewMatrix(eye, viewMatrix);
+
+        float projection[16];
         XrFovf* fov = &view->fov;
-        float left = tanf(fov->angleLeft);
-        float right = tanf(fov->angleRight);
-        float up = tanf(fov->angleUp);
-        float down = tanf(fov->angleDown);
-        mat4_fov(camera.projection[eye], left, right, up, down, state.clipNear, state.clipFar);
-        mat4_identity(camera.viewMatrix[eye]);
-        mat4_translate(camera.viewMatrix[eye], v->x, v->y, v->z);
-        mat4_rotateQuat(camera.viewMatrix[eye], (float[4]) { q->x, q->y, q->z, q->w });
-        mat4_invert(camera.viewMatrix[eye]);
+        mat4_fov(projection, -fov->angleLeft, fov->angleRight, fov->angleUp, -fov->angleDown, state.clipNear, state.clipFar);
+        lovrGraphicsSetProjection(eye, projection);
       }
 
-      lovrCanvasSetAttachments(state.canvas, &(Attachment) { state.textures[imageIndex], 0, 0 }, 1);
-      lovrGraphicsSetCamera(&camera, true);
+      lovrGraphicsSetBackbuffer(state.canvases[state.imageIndex], true, true);
       callback(userdata);
-      lovrGraphicsSetCamera(NULL, false);
+      lovrGraphicsSetBackbuffer(NULL, false, false);
 
       endInfo.layerCount = 1;
       state.layerViews[0].pose = views[0].pose;
@@ -841,7 +826,8 @@ static void openxr_renderTo(void (*callback)(void*), void* userdata) {
 }
 
 static Texture* openxr_getMirrorTexture(void) {
-  return state.canvas ? lovrCanvasGetAttachments(state.canvas, NULL)[0].texture : NULL;
+  Canvas* canvas = state.canvases[state.imageIndex];
+  return canvas ? lovrCanvasGetAttachments(canvas, NULL)[0].texture : NULL;
 }
 
 static void openxr_update(float dt) {

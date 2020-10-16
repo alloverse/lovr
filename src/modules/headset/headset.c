@@ -1,11 +1,11 @@
 #include "headset/headset.h"
 #include "core/util.h"
 
-HeadsetInterface* lovrHeadsetDriver = NULL;
+HeadsetInterface* lovrHeadsetDisplayDriver = NULL;
 HeadsetInterface* lovrHeadsetTrackingDrivers = NULL;
 static bool initialized = false;
 
-bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_t msaa) {
+bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float supersample, float offset, uint32_t msaa) {
   if (initialized) return false;
   initialized = true;
 
@@ -40,11 +40,11 @@ bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_
     }
 
     bool hasDisplay = interface->renderTo != NULL;
-    bool shouldInitialize = !hasDisplay || !lovrHeadsetDriver;
+    bool shouldInitialize = !hasDisplay || !lovrHeadsetDisplayDriver;
 
-    if (shouldInitialize && interface->init(offset, msaa)) {
+    if (shouldInitialize && interface->init(supersample, offset, msaa)) {
       if (hasDisplay) {
-        lovrHeadsetDriver = interface;
+        lovrHeadsetDisplayDriver = interface;
       }
 
       *trackingDrivers = interface;
@@ -52,7 +52,7 @@ bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float offset, uint32_
     }
   }
 
-  lovrAssert(lovrHeadsetDriver, "No headset display driver available, check t.headset.drivers in conf.lua");
+  lovrAssert(lovrHeadsetDisplayDriver, "No headset display driver available, check t.headset.drivers in conf.lua");
   return true;
 }
 
@@ -62,7 +62,7 @@ void lovrHeadsetDestroy() {
 
   HeadsetInterface* driver = lovrHeadsetTrackingDrivers;
   while (driver) {
-    if (driver != lovrHeadsetDriver) {
+    if (driver != lovrHeadsetDisplayDriver) {
       driver->destroy();
     }
     HeadsetInterface* next = driver->next;
@@ -70,8 +70,8 @@ void lovrHeadsetDestroy() {
     driver = next;
   }
 
-  if (lovrHeadsetDriver) {
-    lovrHeadsetDriver->destroy();
-    lovrHeadsetDriver = NULL;
+  if (lovrHeadsetDisplayDriver) {
+    lovrHeadsetDisplayDriver->destroy();
+    lovrHeadsetDisplayDriver = NULL;
   }
 }

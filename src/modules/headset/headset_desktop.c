@@ -32,14 +32,12 @@ static struct {
   float clipFar;
   float pitch;
   float yaw;
-  float fov;
 } state;
 
-static bool desktop_init(float offset, uint32_t msaa) {
+static bool desktop_init(float supersample, float offset, uint32_t msaa) {
   state.offset = offset;
   state.clipNear = .1f;
   state.clipFar = 100.f;
-  state.fov = 67.f * (float) M_PI / 180.f;
 
   if (!state.initialized) {
     mat4_identity(state.headTransform);
@@ -89,18 +87,20 @@ static uint32_t desktop_getViewCount(void) {
 static bool desktop_getViewPose(uint32_t view, float* position, float* orientation) {
   vec3_init(position, state.position);
   quat_fromMat4(orientation, state.headTransform);
+  position[1] += state.offset;
   return view < 2;
 }
 
 static bool desktop_getViewAngles(uint32_t view, float* left, float* right, float* up, float* down) {
-  float aspect;
+  float aspect, fov;
   uint32_t width, height;
   desktop_getDisplayDimensions(&width, &height);
   aspect = (float) width / 2.f / height;
-  *left = -state.fov * aspect * .5f;
-  *right = state.fov * aspect * .5f;
-  *up = state.fov * .5f;
-  *down = -state.fov * .5f;
+  fov = 67.f * (float) M_PI / 180.f * .5f;
+  *left = fov * aspect;
+  *right = fov * aspect;
+  *up = fov;
+  *down = fov;
   return view < 2;
 }
 
@@ -181,17 +181,20 @@ static bool desktop_animate(Device device, struct Model* model) {
 }
 
 static void desktop_renderTo(void (*callback)(void*), void* userdata) {
-  float left, right, up, down;
+  float projection[16], left, right, up, down;
   desktop_getViewAngles(0, &left, &right, &up, &down);
-  Camera camera = { .canvas = NULL, .viewMatrix = { MAT4_IDENTITY }, .stereo = true };
-  mat4_fov(camera.projection[0], tanf(left), tanf(right), tanf(up), tanf(down), state.clipNear, state.clipFar);
-  mat4_multiply(camera.viewMatrix[0], state.headTransform);
-  mat4_invert(camera.viewMatrix[0]);
-  mat4_set(camera.projection[1], camera.projection[0]);
-  mat4_set(camera.viewMatrix[1], camera.viewMatrix[0]);
-  lovrGraphicsSetCamera(&camera, true);
+  mat4_fov(projection, left, right, up, down, state.clipNear, state.clipFar);
+
+  float viewMatrix[16];
+  mat4_invert(mat4_init(viewMatrix, state.headTransform));
+
+  lovrGraphicsSetProjection(0, projection);
+  lovrGraphicsSetProjection(1, projection);
+  lovrGraphicsSetViewMatrix(0, viewMatrix);
+  lovrGraphicsSetViewMatrix(1, viewMatrix);
+  lovrGraphicsSetBackbuffer(NULL, true, true);
   callback(userdata);
-  lovrGraphicsSetCamera(NULL, false);
+  lovrGraphicsSetBackbuffer(NULL, false, false);
 }
 
 static void desktop_update(float dt) {
