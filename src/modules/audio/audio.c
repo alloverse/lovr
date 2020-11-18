@@ -77,6 +77,8 @@ bool lovrAudioInit() {
   }
 #endif
 
+  alDistanceModel(AL_EXPONENT_DISTANCE);
+
   state.device = device;
   state.context = context;
   arr_init(&state.sources);
