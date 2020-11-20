@@ -6,11 +6,7 @@ HeadsetInterface* lovrHeadsetTrackingDrivers = NULL;
 static bool initialized = false;
 
 bool lovrHeadsetInit(HeadsetDriver* drivers, size_t count, float supersample, float offset, uint32_t msaa) {
-  if (initialized)
-  {
-    lovrAssert(lovrHeadsetDisplayDriver, "No headset display driver available, check t.headset.drivers in conf.lua");
-    return false;
-  }
+  if (initialized) return false;
   initialized = true;
 
   HeadsetInterface** trackingDrivers = &lovrHeadsetTrackingDrivers;
