@@ -703,6 +703,7 @@ elseif(ANDROID)
         --out lovr.apk
       COMMAND ${CMAKE_COMMAND} -E remove lovr.unaligned.apk lovr.unsigned.apk AndroidManifest.xml Activity.java classes.dex
       COMMAND ${CMAKE_COMMAND} -E remove_directory org
+      DEPENDS lovr
     )
   endif()
 elseif(UNIX)
