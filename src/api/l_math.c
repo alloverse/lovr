@@ -28,7 +28,7 @@ static const luaL_Reg* lovrVectorMetatables[] = {
   [V_MAT4] = lovrMat4
 };
 
-static int lovrVectorMetatableRefs[] = {
+static LOVR_THREAD_LOCAL int lovrVectorMetatableRefs[] = {
   [V_VEC2] = LUA_REFNIL,
   [V_VEC3] = LUA_REFNIL,
   [V_VEC4] = LUA_REFNIL,
@@ -109,6 +109,13 @@ static int l_lovrMathNewCurve(lua_State* L) {
       lovrCurveAddPoint(curve, point, pointIndex++);
       i += 3 + components;
       lua_pop(L, 3);
+    }
+  } else if (top == 1 && lua_type(L, 1) == LUA_TNUMBER) {
+    float point[4] = { 0 };
+    int count = lua_tonumber(L, 1);
+    lovrAssert(count > 0, "Number of curve points must be positive");
+    for (int i = 0; i < count; i++) {
+      lovrCurveAddPoint(curve, point, i);
     }
   } else {
     int pointIndex = 0;
