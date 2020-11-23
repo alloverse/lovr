@@ -30,12 +30,14 @@ endif()
 option(LOVR_USE_VRAPI "Enable the VrApi backend for the headset module" OFF)
 option(LOVR_USE_PICO "Enable the Pico backend for the headset module" OFF)
 option(LOVR_USE_DESKTOP_HEADSET "Enable the keyboard/mouse backend for the headset module" ON)
+option(LOVR_USE_LINUX_EGL "Use the EGL graphics extension on Linux" OFF)
 
 option(LOVR_SYSTEM_ENET "Use the system-provided enet" OFF)
 option(LOVR_SYSTEM_GLFW "Use the system-provided glfw" OFF)
 option(LOVR_SYSTEM_LUA "Use the system-provided Lua" OFF)
 option(LOVR_SYSTEM_ODE "Use the system-provided ODE" OFF)
 option(LOVR_SYSTEM_OPENAL "Use the system-provided OpenAL" OFF)
+option(LOVR_SYSTEM_OPENXR "Use the system-provided OpenXR" OFF)
 
 option(LOVR_BUILD_EXE "Build an executable (or an apk on Android)" ON)
 option(LOVR_BUILD_SHARED "Build a shared library (takes precedence over LOVR_BUILD_EXE)" OFF)
@@ -249,8 +251,17 @@ if(LOVR_ENABLE_HEADSET AND LOVR_USE_OPENXR)
     set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION "${LOVR_OPENXR_OCULUS_PATH}/Libs/Android/${ANDROID_ABI}/Release/libopenxr_loader.so")
     set(LOVR_OPENXR openxr_loader)
   else()
-    add_subdirectory(deps/openxr openxr)
-    set(LOVR_OPENXR openxr_loader)
+    if(LOVR_SYSTEM_OPENXR)
+      pkg_search_module(OPENXR openxr)
+      if(NOT OPENXR_FOUND)
+        message(FATAL_ERROR "OpenXR not found.")
+      endif()
+      include_directories(${OPENXR_INCLUDE_DIRS})
+      set(LOVR_OPENXR ${OPENXR_LIBRARIES})
+    else()
+      add_subdirectory(deps/openxr openxr)
+      set(LOVR_OPENXR openxr_loader)
+    endif()
   endif()
 endif()
 
@@ -659,11 +670,13 @@ elseif(ANDROID)
 
     set(ANDROID_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/AndroidManifest_${MANIFEST}.xml" CACHE STRING "The AndroidManifest.xml file to use")
 
+    if (ANDROID_KEYSTORE_PASS) # Trick so that --ks-pass is not passed if no password is given.
+      set(ANDROID_APKSIGNER_KEYSTORE_PASS --ks-pass)
+    endif()
+
     # Make an apk
-    add_custom_command(
-      TARGET lovr
-      POST_BUILD
-      BYPRODUCTS lovr.apk
+    add_custom_target(
+      buildAPK ALL
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
       COMMAND ${CMAKE_COMMAND} -E copy "${ANDROID_MANIFEST}" AndroidManifest.xml
       COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/src/resources/Activity_${ACTIVITY}.java Activity.java
@@ -684,15 +697,22 @@ elseif(ANDROID)
       COMMAND ${ANDROID_TOOLS}/apksigner
         sign
         --ks ${ANDROID_KEYSTORE}
-        --ks-pass ${ANDROID_KEYSTORE_PASS}
+        ${ANDROID_APKSIGNER_KEYSTORE_PASS} ${ANDROID_KEYSTORE_PASS}
         $<$<BOOL:${ANDROID_KEY_PASS}>:--key-pass> $<$<BOOL:${ANDROID_KEY_PASS}>:${ANDROID_KEY_PASS}>
         --in lovr.unsigned.apk
         --out lovr.apk
       COMMAND ${CMAKE_COMMAND} -E remove lovr.unaligned.apk lovr.unsigned.apk AndroidManifest.xml Activity.java classes.dex
       COMMAND ${CMAKE_COMMAND} -E remove_directory org
+      DEPENDS lovr
     )
   endif()
 elseif(UNIX)
-  target_sources(lovr PRIVATE src/core/os_linux.c)
+  if(LOVR_USE_LINUX_EGL)
+    target_sources(lovr PRIVATE src/core/os_linux.c)
+    target_compile_definitions(lovr PRIVATE -DLOVR_LINUX_EGL)
+  else()
+    target_sources(lovr PRIVATE src/core/os_linux.c)
+    target_compile_definitions(lovr PRIVATE -DLOVR_LINUX_X11)
+  endif()
   target_compile_definitions(lovr PRIVATE -DLOVR_GL)
 endif()

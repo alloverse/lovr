@@ -24,6 +24,19 @@
   #define XR_USE_GRAPHICS_API_OPENGL_ES
   #define GRAPHICS_EXTENSION "XR_KHR_opengl_es_enable"
 #endif
+#if defined(LOVR_LINUX_X11)
+  #define XR_USE_PLATFORM_XLIB
+  typedef unsigned long XID;
+  typedef struct Display Display;
+  typedef XID GLXFBConfig;
+  typedef XID GLXDrawable;
+  typedef XID GLXContext;
+#endif
+#if defined(LOVR_LINUX_EGL)
+  #define XR_USE_PLATFORM_EGL
+  #define EGL_NO_X11
+  #include <EGL/egl.h>
+#endif
 #define XR_NO_PROTOTYPES
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -43,6 +56,15 @@ HANDLE lovrPlatformGetWindow(void);
 HGLRC lovrPlatformGetContext(void);
 #elif defined(__ANDROID__)
 struct ANativeActivity* lovrPlatformGetActivity(void);
+EGLDisplay lovrPlatformGetEGLDisplay(void);
+EGLContext lovrPlatformGetEGLContext(void);
+EGLConfig lovrPlatformGetEGLConfig(void);
+#elif defined(LOVR_LINUX_X11)
+Display* lovrPlatformGetX11Display(void);
+GLXDrawable lovrPlatformGetGLXDrawable(void);
+GLXContext lovrPlatformGetGLXContext(void);
+#elif defined(LOVR_LINUX_EGL)
+PFNEGLGETPROCADDRESSPROC lovrPlatformGetEGLProcAddr(void);
 EGLDisplay lovrPlatformGetEGLDisplay(void);
 EGLContext lovrPlatformGetEGLContext(void);
 EGLConfig lovrPlatformGetEGLConfig(void);
@@ -181,6 +203,10 @@ static bool openxr_init(float supersample, float offset, uint32_t msaa) {
 
 #ifdef __ANDROID__
     enabledExtensionNames[enabledExtensionCount++] = XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME;
+#endif
+
+#ifdef LOVR_LINUX_EGL
+    enabledExtensionNames[enabledExtensionCount++] = "XR_MNDX_egl_enable";
 #endif
 
     enabledExtensionNames[enabledExtensionCount++] = GRAPHICS_EXTENSION;
@@ -326,6 +352,25 @@ static bool openxr_init(float supersample, float offset, uint32_t msaa) {
       .config = lovrPlatformGetEGLConfig(),
       .context = lovrPlatformGetEGLContext()
     };
+#elif defined(LOVR_LINUX_X11)
+    XrGraphicsBindingOpenGLXlibKHR graphicsBinding = {
+      .type = XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR,
+      .next = NULL,
+      .xDisplay = lovrPlatformGetX11Display(),
+      .visualid = 0,
+      .glxFBConfig = 0,
+      .glxDrawable = lovrPlatformGetGLXDrawable(),
+      .glxContext = lovrPlatformGetGLXContext(),
+    };
+#elif defined(LOVR_LINUX_EGL)
+    XrGraphicsBindingEGLMNDX graphicsBinding = {
+      .type = XR_TYPE_GRAPHICS_BINDING_EGL_MNDX,
+      .next = NULL,
+      .getProcAddress = lovrPlatformGetEGLProcAddr(),
+      .display = lovrPlatformGetEGLDisplay(),
+      .config = lovrPlatformGetEGLConfig(),
+      .context = lovrPlatformGetEGLContext(),
+    };
 #else
 #error "Unsupported OpenXR platform/graphics combination"
 #endif
@@ -376,7 +421,8 @@ static bool openxr_init(float supersample, float offset, uint32_t msaa) {
     XrActionSpaceCreateInfo leftHandSpaceInfo = {
       .type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
       .action = state.actions[ACTION_HAND_POSE],
-      .subactionPath = state.actionFilters[0]
+      .subactionPath = state.actionFilters[0],
+      .poseInActionSpace = { .orientation = { 0.f, 0.f, 0.f, 1.f }, .position = { 0.f, 0.f, 0.f } }
     };
 
     XR_INIT(xrCreateActionSpace(state.session, &leftHandSpaceInfo, &state.spaces[DEVICE_HAND_LEFT]));
@@ -385,7 +431,8 @@ static bool openxr_init(float supersample, float offset, uint32_t msaa) {
     XrActionSpaceCreateInfo rightHandSpaceInfo = {
       .type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
       .action = state.actions[ACTION_HAND_POSE],
-      .subactionPath = state.actionFilters[1]
+      .subactionPath = state.actionFilters[1],
+      .poseInActionSpace = { .orientation = { 0.f, 0.f, 0.f, 1.f }, .position = { 0.f, 0.f, 0.f } }
     };
 
     XR_INIT(xrCreateActionSpace(state.session, &rightHandSpaceInfo, &state.spaces[DEVICE_HAND_RIGHT]));
@@ -598,7 +645,7 @@ static bool openxr_getPose(Device device, vec3 position, quat orientation) {
     return false;
   }
 
-  XrSpaceLocation location = { .next = NULL };
+  XrSpaceLocation location = { .type = XR_TYPE_SPACE_LOCATION, .next = NULL };
   xrLocateSpace(state.spaces[device], state.referenceSpace, state.frameState.predictedDisplayTime, &location);
   memcpy(orientation, &location.pose.orientation, 4 * sizeof(float));
   memcpy(position, &location.pose.position, 3 * sizeof(float));
@@ -611,7 +658,7 @@ static bool openxr_getVelocity(Device device, vec3 linearVelocity, vec3 angularV
   }
 
   XrSpaceVelocity velocity = { .type = XR_TYPE_SPACE_VELOCITY };
-  XrSpaceLocation location = { .next = &velocity };
+  XrSpaceLocation location = { .type = XR_TYPE_SPACE_LOCATION, .next = &velocity };
   xrLocateSpace(state.spaces[device], state.referenceSpace, state.frameState.predictedDisplayTime, &location);
   memcpy(linearVelocity, &velocity.linearVelocity, 3 * sizeof(float));
   memcpy(angularVelocity, &velocity.angularVelocity, 3 * sizeof(float));
@@ -644,7 +691,9 @@ static bool getButtonState(Device device, DeviceButton button, bool* value, bool
     default: return false;
   }
 
-  XrActionStateBoolean actionState;
+  XrActionStateBoolean actionState = {
+      .type = XR_TYPE_ACTION_STATE_BOOLEAN,
+  };
   XR(xrGetActionStateBoolean(state.session, &info, &actionState));
   *value = actionState.currentState;
   *changed = actionState.changedSinceLastSync;
@@ -667,7 +716,9 @@ static bool getFloatAction(uint32_t action, XrPath filter, float* value) {
     .subactionPath = filter
   };
 
-  XrActionStateFloat actionState;
+  XrActionStateFloat actionState = {
+      .type = XR_TYPE_ACTION_STATE_FLOAT,
+  };
   XR(xrGetActionStateFloat(state.session, &info, &actionState));
   *value = actionState.currentState;
   return actionState.isActive;
@@ -691,6 +742,10 @@ static bool openxr_getAxis(Device device, DeviceAxis axis, float* value) {
 
 static bool openxr_getSkeleton(Device device, float* poses) {
   if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT) {
+    return false;
+  }
+
+  if (!state.features.handTracking) {
     return false;
   }
 
@@ -797,7 +852,7 @@ static void openxr_renderTo(void (*callback)(void*), void* userdata) {
         float viewMatrix[16];
         XrView* view = &views[eye];
         mat4_fromQuat(viewMatrix, &view->pose.orientation.x);
-        memcpy(viewMatrix, &view->pose.position.x, 3 * sizeof(float));
+        memcpy(viewMatrix + 12, &view->pose.position.x, 3 * sizeof(float));
         mat4_invert(viewMatrix);
         lovrGraphicsSetViewMatrix(eye, viewMatrix);
 
@@ -879,7 +934,7 @@ static void openxr_update(float dt) {
 
     XrActionsSyncInfo syncInfo = {
       .type = XR_TYPE_ACTIONS_SYNC_INFO,
-      .countActiveActionSets = 1,
+      .countActiveActionSets = 2,
       .activeActionSets = (XrActiveActionSet[]) {
         { state.actionSet, state.actionFilters[0] },
         { state.actionSet, state.actionFilters[1] }
