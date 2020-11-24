@@ -121,7 +121,7 @@ endif()
 # Lua
 if(LOVR_USE_LUAJIT AND NOT EMSCRIPTEN)
   if (APPLE)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pagezero_size 10000 -image_base 100000000")
+    set(LUAJIT_ENABLE_GC64 ON)
   endif()
   if(LOVR_SYSTEM_LUA)
     pkg_search_module(LUAJIT REQUIRED luajit)
