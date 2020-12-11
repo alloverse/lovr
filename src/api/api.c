@@ -9,6 +9,7 @@
 typedef void voidFn(void);
 typedef void destructorFn(void*);
 
+// Object names are lightuserdata because Variants need a non-Lua string due to threads.
 static int luax_meta__tostring(lua_State* L) {
   lua_getfield(L, -1, "__name");
   lua_pushstring(L, (const char*) lua_touserdata(L, -1));
@@ -171,7 +172,7 @@ int _luax_checkenum(lua_State* L, int index, const StringEntry* map, const char*
   size_t length;
   const char* string = fallback ? luaL_optlstring(L, index, fallback, &length) : luaL_checklstring(L, index, &length);
 
-  for (size_t i = 0; map[i].length; i++) {
+  for (int i = 0; map[i].length; i++) {
     if (map[i].length == length && !memcmp(map[i].string, string, length)) {
       return i;
     }

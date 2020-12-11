@@ -79,23 +79,17 @@ elseif(UNIX)
 endif()
 
 # enet
-if(LOVR_ENABLE_ENET)
+if(LOVR_ENABLE_ENET AND NOT EMSCRIPTEN)
   if(LOVR_SYSTEM_ENET)
     pkg_search_module(ENET REQUIRED enet)
     include_directories(${ENET_INCLUDE_DIRS})
     set(LOVR_ENET ${ENET_LIBRARIES})
   else()
-    if(EMSCRIPTEN)
-      set(HAVE_HAS_SOCKLEN_T TRUE CACHE BOOL "")
-    endif()
     add_subdirectory(deps/enet enet)
     include_directories(deps/enet/include)
     set(LOVR_ENET enet)
     if(WIN32)
       set(LOVR_ENET ${LOVR_ENET} ws2_32 winmm)
-    endif()
-    if(EMSCRIPTEN)
-      target_compile_definitions(enet PRIVATE __APPLE__)
     endif()
   endif()
 endif()
@@ -334,7 +328,6 @@ set(LOVR_SRC
   src/core/arr.c
   src/core/fs.c
   src/core/map.c
-  src/core/png.c
   src/core/ref.c
   src/core/utf.c
   src/core/util.c
@@ -461,9 +454,6 @@ if(LOVR_ENABLE_HEADSET)
   if(LOVR_USE_OPENVR)
     add_definitions(-DLOVR_USE_OPENVR)
     target_sources(lovr PRIVATE src/modules/headset/headset_openvr.c)
-    if(UNIX)
-      target_compile_options(lovr PRIVATE -Wno-typedef-redefinition)
-    endif()
   endif()
   if(LOVR_USE_OPENXR)
     add_definitions(-DLOVR_USE_OPENXR)
