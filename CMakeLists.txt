@@ -36,7 +36,6 @@ option(LOVR_SYSTEM_ENET "Use the system-provided enet" OFF)
 option(LOVR_SYSTEM_GLFW "Use the system-provided glfw" OFF)
 option(LOVR_SYSTEM_LUA "Use the system-provided Lua" OFF)
 option(LOVR_SYSTEM_ODE "Use the system-provided ODE" OFF)
-option(LOVR_SYSTEM_OPENAL "Use the system-provided OpenAL" OFF)
 option(LOVR_SYSTEM_OPENXR "Use the system-provided OpenXR" OFF)
 
 option(LOVR_BUILD_EXE "Build an executable (or an apk on Android)" ON)
@@ -174,35 +173,6 @@ if(LOVR_ENABLE_PHYSICS)
     endif()
     include_directories(deps/ode/include "${CMAKE_CURRENT_BINARY_DIR}/ode/include")
     set(LOVR_ODE ode)
-  endif()
-endif()
-
-# OpenAL
-if(LOVR_ENABLE_AUDIO)
-  if(LOVR_SYSTEM_OPENAL)
-    pkg_search_module(OPENAL openal-soft)
-    if (NOT OPENAL_FOUND)
-      pkg_search_module(OPENAL openal)
-      if (NOT OPENAL_FOUND)
-        message(FATAL_ERROR "OpenAL not found.")
-      endif()
-    endif()
-    include_directories(${OPENAL_INCLUDE_DIRS})
-    string(REPLACE ";" " " OPENAL_LDFLAGS_STR "${OPENAL_LDFLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OPENAL_LDFLAGS_STR}")
-    set(LOVR_OPENAL ${OPENAL_LIBRARIES})
-  else()
-    set(ALSOFT_UTILS OFF CACHE BOOL "")
-    set(ALSOFT_EXAMPLES OFF CACHE BOOL "")
-    set(ALSOFT_TESTS OFF CACHE BOOL "")
-    if(NOT EMSCRIPTEN)
-      add_subdirectory(deps/openal-soft openal)
-      set(LOVR_OPENAL OpenAL)
-      if(WIN32)
-        set_target_properties(OpenAL PROPERTIES COMPILE_FLAGS "/wd4005 /wd4098")
-      endif()
-    endif()
-    include_directories(deps/openal-soft/include)
   endif()
 endif()
 
@@ -359,7 +329,6 @@ target_link_libraries(lovr
   ${LOVR_LUA}
   ${LOVR_MSDF}
   ${LOVR_ODE}
-  ${LOVR_OPENAL}
   ${LOVR_OPENGL}
   ${LOVR_OPENVR}
   ${LOVR_OPENXR}
@@ -374,16 +343,16 @@ if(LOVR_ENABLE_AUDIO)
   add_definitions(-DLOVR_ENABLE_AUDIO)
   target_sources(lovr PRIVATE
     src/modules/audio/audio.c
+    src/modules/audio/spatializers/dummy_spatializer.c
     src/api/l_audio.c
     src/api/l_audio_source.c
-    src/api/l_audio_microphone.c
+    src/lib/miniaudio/miniaudio.c
   )
 endif()
 
 if(LOVR_ENABLE_DATA)
   add_definitions(-DLOVR_ENABLE_DATA)
   target_sources(lovr PRIVATE
-    src/modules/data/audioStream.c
     src/modules/data/blob.c
     src/modules/data/modelData.c
     src/modules/data/modelData_gltf.c
@@ -392,7 +361,6 @@ if(LOVR_ENABLE_DATA)
     src/modules/data/soundData.c
     src/modules/data/textureData.c
     src/api/l_data.c
-    src/api/l_data_audioStream.c
     src/api/l_data_blob.c
     src/api/l_data_modelData.c
     src/api/l_data_rasterizer.c
@@ -565,7 +533,6 @@ if(WIN32)
   move_dll(${LOVR_GLFW})
   move_dll(${LOVR_LUA})
   move_dll(${LOVR_ODE})
-  move_dll(${LOVR_OPENAL})
   move_dll(${LOVR_OPENVR})
   move_dll(${LOVR_MSDF})
   target_compile_definitions(lovr PRIVATE -DLOVR_GL)
@@ -587,7 +554,6 @@ elseif(APPLE)
     move_lib(${LOVR_GLFW})
     move_lib(${LOVR_LUA})
     move_lib(${LOVR_ODE})
-    move_lib(${LOVR_OPENAL})
     move_lib(${LOVR_OPENVR})
     move_lib(${LOVR_MSDF})
 
@@ -606,13 +572,13 @@ elseif(EMSCRIPTEN)
   target_sources(lovr PRIVATE src/core/os_web.c)
   target_compile_definitions(lovr PRIVATE -DLOVR_WEBGL)
 elseif(ANDROID)
-  target_link_libraries(lovr log EGL GLESv3 android)
+  target_link_libraries(lovr log EGL GLESv3 OpenSLES android)
   target_compile_definitions(lovr PRIVATE -DLOVR_GLES)
   target_include_directories(lovr PRIVATE "${ANDROID_NDK}/sources/android/native_app_glue")
 
   # Dynamically linked targets output libraries in lib/<ABI> for easy including in apk with aapt
   set_target_properties(
-    lovr ${LOVR_ODE} ${LOVR_OPENAL}
+    lovr ${LOVR_ODE}
     PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib/${ANDROID_ABI}"
   )
 
@@ -664,6 +630,10 @@ elseif(ANDROID)
       set(ANDROID_APKSIGNER_KEYSTORE_PASS --ks-pass)
     endif()
 
+    if (ANDROID_EXTRAPACKAGES) # Only pass --extra-packages if var is set
+      set(ANDROID_EXTRAPACKAGES --extra-packages ${ANDROID_EXTRAPACKAGES})
+    endif()
+
     # Make an apk
     add_custom_target(
       buildAPK ALL
@@ -678,6 +648,7 @@ elseif(ANDROID)
         -M AndroidManifest.xml
         -I ${ANDROID_JAR}
         -F lovr.unaligned.apk
+        ${ANDROID_EXTRAPACKAGES}
         ${ANDROID_ASSETS}
       COMMAND
         ${ANDROID_TOOLS}/aapt

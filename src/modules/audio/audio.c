@@ -1,597 +1,498 @@
 #include "audio/audio.h"
-#include "data/audioStream.h"
 #include "data/soundData.h"
+#include "data/blob.h"
 #include "core/arr.h"
-#include "core/maf.h"
 #include "core/ref.h"
+#include "core/os.h"
 #include "core/util.h"
+#include <string.h>
 #include <stdlib.h>
-#include <AL/al.h>
-#include <AL/alc.h>
-#ifndef EMSCRIPTEN
-#include <AL/alext.h>
-#endif
+#include <stdio.h>
+#include "lib/miniaudio/miniaudio.h"
+#include "audio/spatializer.h"
 
-#define SOURCE_BUFFERS 4
+static const ma_format miniAudioFormatFromLovr[] = {
+  [SAMPLE_I16] = ma_format_s16,
+  [SAMPLE_F32] = ma_format_f32
+};
+
+#define OUTPUT_FORMAT SAMPLE_F32
+#define OUTPUT_CHANNELS 2
+#define CAPTURE_CHANNELS 1
 
 struct Source {
-  SourceType type;
-  struct SoundData* soundData;
-  struct AudioStream* stream;
-  ALuint id;
-  ALuint buffers[SOURCE_BUFFERS];
-  bool isLooping;
+  Source* next;
+  SoundData* sound;
+  ma_data_converter* converter;
+  uint32_t offset;
+  float volume;
+  bool tracked;
+  bool playing;
+  bool looping;
+  bool spatial;
+  float transform[16];
 };
 
-struct Microphone {
-  ALCdevice* device;
-  const char* name;
-  bool isRecording;
-  uint32_t sampleRate;
-  uint32_t bitDepth;
-  uint32_t channelCount;
-};
+static inline int outputChannelCountForSource(Source *source) { return source->spatial ? 1 : OUTPUT_CHANNELS; }
 
 static struct {
   bool initialized;
-  bool spatialized;
-  ALCdevice* device;
-  ALCcontext* context;
-  float LOVR_ALIGN(16) orientation[4];
-  float LOVR_ALIGN(16) position[4];
-  float LOVR_ALIGN(16) velocity[4];
-  arr_t(Source*) sources;
+  ma_context context;
+  AudioConfig config[AUDIO_TYPE_COUNT];
+  ma_device devices[AUDIO_TYPE_COUNT];
+  ma_mutex playbackLock;
+  Source* sources;
+  ma_pcm_rb captureRingbuffer;
+  arr_t(ma_data_converter*) converters;
+  Spatializer* spatializer;
+
+  AudioDevice *deviceInfos;
 } state;
 
-static ALenum lovrAudioConvertFormat(uint32_t bitDepth, uint32_t channelCount) {
-  if (bitDepth == 8 && channelCount == 1) {
-    return AL_FORMAT_MONO8;
-  } else if (bitDepth == 8 && channelCount == 2) {
-    return AL_FORMAT_STEREO8;
-  } else if (bitDepth == 16 && channelCount == 1) {
-    return AL_FORMAT_MONO16;
-  } else if (bitDepth == 16 && channelCount == 2) {
-    return AL_FORMAT_STEREO16;
+// Device callbacks
+
+static bool mix(Source* source, float* output, uint32_t count) {
+  float raw[2048];
+  float aux[2048];
+  float mix[4096];
+
+  // TODO
+  // frameLimitIn =
+  // frameLimitOut =
+
+  while (count > 0) {
+    uint32_t chunk = MIN(sizeof(raw) / SampleFormatBytesPerFrame(source->sound->channels, source->sound->format),
+        ma_data_converter_get_required_input_frame_count(source->converter, count));
+        // ^^^ Note need to min `count` with 'capacity of aux buffer' and 'capacity of mix buffer'
+        // could skip min-ing with one of the buffers if you can guarantee that one is bigger/equal to the other (you can because their formats are known)
+    ma_uint64 framesIn = source->sound->read(source->sound, source->offset, chunk, raw);
+    ma_uint64 framesOut = sizeof(aux) / (sizeof(float) * outputChannelCountForSource(source));
+
+    ma_data_converter_process_pcm_frames(source->converter, raw, &framesIn, aux, &framesOut);
+
+    if (source->spatial) {
+      state.spatializer->apply(source, source->transform, aux, mix, framesOut);
+    } else {
+      memcpy(mix, aux, framesOut * SampleFormatBytesPerFrame(OUTPUT_CHANNELS, SAMPLE_F32));
+    }
+
+    for (uint32_t i = 0; i < framesOut * OUTPUT_CHANNELS; i++) {
+      output[i] += mix[i] * source->volume;
+    }
+
+    if (framesIn == 0) {
+      source->offset = 0;
+      if (!source->looping) {
+        source->playing = false;
+        return false;
+      }
+    } else {
+      source->offset += framesIn;
+    }
+
+    count -= framesOut;
+    output += framesOut * OUTPUT_CHANNELS;
   }
-  return 0;
+
+  return true;
 }
 
-bool lovrAudioInit() {
+static void onPlayback(ma_device* device, void* output, const void* _, uint32_t count) {
+  ma_mutex_lock(&state.playbackLock);
+
+  // For each Source, remove it if it isn't playing or process it and remove it if it stops
+  for (Source** list = &state.sources, *source = *list; source != NULL; source = *list) {
+    if (source->playing && mix(source, output, count)) {
+      list = &source->next;
+    } else {
+      *list = source->next;
+      source->tracked = false;
+      lovrRelease(Source, source);
+    }
+  }
+
+  ma_mutex_unlock(&state.playbackLock);
+}
+
+static void onCapture(ma_device* device, void* output, const void* input, uint32_t frames) {
+  // note: ma_pcm_rb is lockless
+  void *store;
+  size_t bytesPerFrame = SampleFormatBytesPerFrame(CAPTURE_CHANNELS, OUTPUT_FORMAT);
+  while(frames > 0) {
+    uint32_t availableFrames = frames;
+    ma_result acquire_status = ma_pcm_rb_acquire_write(&state.captureRingbuffer, &availableFrames, &store);
+    if (acquire_status != MA_SUCCESS) {
+      return;
+    }
+    memcpy(store, input, availableFrames * bytesPerFrame);
+    ma_result commit_status = ma_pcm_rb_commit_write(&state.captureRingbuffer, availableFrames, store);
+    if (commit_status != MA_SUCCESS || availableFrames == 0) {
+      return;
+    }
+    frames -= availableFrames;
+    input += availableFrames * bytesPerFrame;
+  }
+}
+
+static const ma_device_callback_proc callbacks[] = { onPlayback, onCapture };
+
+static Spatializer *spatializers[] = {
+  &dummySpatializer,
+};
+
+// Entry
+
+bool lovrAudioInit(AudioConfig config[2]) {
   if (state.initialized) return false;
 
-  ALCdevice* device = alcOpenDevice(NULL);
-  lovrAssert(device, "Unable to open default audio device");
+  memcpy(state.config, config, sizeof(state.config));
 
-  ALCcontext* context = alcCreateContext(device, NULL);
-  if (!context || !alcMakeContextCurrent(context) || alcGetError(device) != ALC_NO_ERROR) {
-    lovrThrow("Unable to create OpenAL context");
+  if (ma_context_init(NULL, 0, NULL, &state.context)) {
+    return false;
   }
 
-#if ALC_SOFT_HRTF
-  static LPALCRESETDEVICESOFT alcResetDeviceSOFT;
-  alcResetDeviceSOFT = (LPALCRESETDEVICESOFT) alcGetProcAddress(device, "alcResetDeviceSOFT");
-  state.spatialized = alcIsExtensionPresent(device, "ALC_SOFT_HRTF");
+  int mutexStatus = ma_mutex_init(&state.playbackLock);
+  lovrAssert(mutexStatus == MA_SUCCESS, "Failed to create audio mutex");
 
-  if (state.spatialized) {
-    alcResetDeviceSOFT(device, (ALCint[]) { ALC_HRTF_SOFT, ALC_TRUE, 0 });
+  lovrAudioReset();
+
+  for (int i = 0; i < AUDIO_TYPE_COUNT; i++) {
+    if (config[i].enable && config[i].start) {
+      int startStatus = ma_device_start(&state.devices[i]);
+      if(startStatus != MA_SUCCESS) {
+        lovrAudioDestroy();
+        lovrAssert(false, "Failed to start audio device %d\n", i);
+        return false;
+      }
+    }
   }
-#endif
 
-  alDistanceModel(AL_EXPONENT_DISTANCE);
+  ma_result rbstatus = ma_pcm_rb_init(miniAudioFormatFromLovr[OUTPUT_FORMAT], CAPTURE_CHANNELS, state.config[AUDIO_CAPTURE].sampleRate * 1.0, NULL, NULL, &state.captureRingbuffer);
+  if (rbstatus != MA_SUCCESS) {
+    lovrAudioDestroy();
+    return false;
+  }
 
-  state.device = device;
-  state.context = context;
-  arr_init(&state.sources);
+  for (size_t i = 0; i < sizeof(spatializers) / sizeof(spatializers[0]); i++) {
+    if (spatializers[i]->init()) {
+      state.spatializer = spatializers[i];
+      break;
+    }
+  }
+  lovrAssert(state.spatializer != NULL, "Must have at least one spatializer");
+
+  arr_init(&state.converters);
+
   return state.initialized = true;
 }
 
 void lovrAudioDestroy() {
   if (!state.initialized) return;
-  for (size_t i = 0; i < state.sources.length; i++) {
-    lovrRelease(Source, state.sources.data[i]);
+  ma_device_uninit(&state.devices[AUDIO_PLAYBACK]);
+  ma_device_uninit(&state.devices[AUDIO_CAPTURE]);
+  ma_mutex_uninit(&state.playbackLock);
+  ma_context_uninit(&state.context);
+  if (state.spatializer) state.spatializer->destroy();
+  for(int i = 0; i < state.converters.length; i++) {
+    ma_data_converter_uninit(state.converters.data[i]);
+    free(state.converters.data[i]);
   }
-  arr_free(&state.sources);
-  alcMakeContextCurrent(NULL);
-  alcDestroyContext(state.context);
-  alcCloseDevice(state.device);
+  arr_free(&state.converters);
   memset(&state, 0, sizeof(state));
 }
 
-void lovrAudioUpdate() {
-  for (size_t i = state.sources.length; i-- > 0;) {
-    Source* source = state.sources.data[i];
+bool lovrAudioInitDevice(AudioType type) {
+  ma_device_type deviceType = (type == AUDIO_PLAYBACK) ? ma_device_type_playback : ma_device_type_capture;
 
-    if (lovrSourceGetType(source) == SOURCE_STATIC) {
-      continue;
+  ma_device_config config = ma_device_config_init(deviceType);
+  config.sampleRate = state.config[type].sampleRate;
+  lovrAssert(state.config[AUDIO_PLAYBACK].format == OUTPUT_FORMAT, "Only f32 playback format currently supported");
+  config.playback.format = miniAudioFormatFromLovr[state.config[AUDIO_PLAYBACK].format];
+  config.capture.format = miniAudioFormatFromLovr[state.config[AUDIO_CAPTURE].format];
+  config.playback.pDeviceID = state.config[AUDIO_PLAYBACK].device;
+  config.capture.pDeviceID = state.config[AUDIO_CAPTURE].device;
+  config.playback.channels = OUTPUT_CHANNELS;
+  config.capture.channels = CAPTURE_CHANNELS;
+  config.dataCallback = callbacks[type];
+  config.performanceProfile = ma_performance_profile_low_latency;
+
+  int err = ma_device_init(&state.context, &config, &state.devices[type]); 
+  if (err != MA_SUCCESS) {
+    lovrLog(LOG_WARN, "audio", "Failed to enable audio device %d: %d\n", type, err);
+    return false;
+  }
+  return true;
+}
+
+bool lovrAudioReset() {
+  for (int i = 0; i < AUDIO_TYPE_COUNT; i++) {
+    // clean up previous state ...
+    if (state.devices[i].state != 0) {
+      ma_device_uninit(&state.devices[i]);
     }
 
-    ALenum sourceState;
-    alGetSourcei(source->id, AL_SOURCE_STATE, &sourceState);
-    bool isStopped = sourceState == AL_STOPPED;
-    ALint processed;
-    alGetSourcei(source->id, AL_BUFFERS_PROCESSED, &processed);
+    // .. and create new one
+    if (state.config[i].enable) {
+      lovrAudioInitDevice(i);
+    }
+  }
 
-    if (processed) {
-      ALuint buffers[SOURCE_BUFFERS];
-      alSourceUnqueueBuffers(source->id, processed, buffers);
-      lovrSourceStream(source, buffers, processed);
-      if (isStopped) {
-        alSourcePlay(source->id);
+  return true;
+}
+
+bool lovrAudioStart(AudioType type) {
+  if (state.config[type].enable == false) {
+    if (lovrAudioInitDevice(type) == false) {
+      if (type == AUDIO_CAPTURE) {
+        lovrPlatformRequestPermission(AUDIO_CAPTURE_PERMISSION);
+        // lovrAudioStart will be retried from boot.lua upon permission granted event
       }
-    } else if (isStopped) {
-      // in case we'll play this source in the future, rewind it now. This also frees up queued raw buffers.
-      lovrAudioStreamRewind(source->stream);
-
-      arr_splice(&state.sources, i, 1);
-      lovrRelease(Source, source);
+      return false;
     }
+    state.config[type].enable = state.config[type].start = true;
   }
+  int status = ma_device_start(&state.devices[type]);
+  return status == MA_SUCCESS;
 }
 
-void lovrAudioAdd(Source* source) {
-  if (!lovrAudioHas(source)) {
-    lovrRetain(source);
-    arr_push(&state.sources, source);
-  }
-}
-
-void lovrAudioGetDopplerEffect(float* factor, float* speedOfSound) {
-  alGetFloatv(AL_DOPPLER_FACTOR, factor);
-  alGetFloatv(AL_SPEED_OF_SOUND, speedOfSound);
-}
-
-void lovrAudioGetMicrophoneNames(const char* names[MAX_MICROPHONES], uint32_t* count) {
-  const char* name = alcGetString(NULL, ALC_CAPTURE_DEVICE_SPECIFIER);
-  *count = 0;
-  while (*name) {
-    names[(*count)++] = name;
-    name += strlen(name);
-  }
-}
-
-void lovrAudioGetOrientation(quat orientation) {
-  quat_init(orientation, state.orientation);
-}
-
-void lovrAudioGetPosition(vec3 position) {
-  vec3_init(position, state.position);
-}
-
-void lovrAudioGetVelocity(vec3 velocity) {
-  vec3_init(velocity, state.velocity);
+bool lovrAudioStop(AudioType type) {
+  return ma_device_stop(&state.devices[type]) == MA_SUCCESS;
 }
 
 float lovrAudioGetVolume() {
-  float volume;
-  alGetListenerf(AL_GAIN, &volume);
+  float volume = 0.f;
+  ma_device_get_master_volume(&state.devices[AUDIO_PLAYBACK], &volume);
   return volume;
 }
 
-bool lovrAudioHas(Source* source) {
-  for (size_t i = 0; i < state.sources.length; i++) {
-    if (state.sources.data[i] == source) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool lovrAudioIsSpatialized() {
-  return state.spatialized;
-}
-
-void lovrAudioPause() {
-  for (size_t i = 0; i < state.sources.length; i++) {
-    lovrSourcePause(state.sources.data[i]);
-  }
-}
-
-void lovrAudioSetDopplerEffect(float factor, float speedOfSound) {
-  alDopplerFactor(factor);
-  alSpeedOfSound(speedOfSound);
-}
-
-void lovrAudioSetOrientation(quat orientation) {
-
-  // Rotate the unit forward/up vectors by the quaternion derived from the specified angle/axis
-  float f[4] = { 0.f, 0.f, -1.f };
-  float u[4] = { 0.f, 1.f,  0.f };
-  quat_init(state.orientation, orientation);
-  quat_rotate(state.orientation, f);
-  quat_rotate(state.orientation, u);
-
-  // Pass the rotated orientation vectors to OpenAL
-  ALfloat directionVectors[6] = { f[0], f[1], f[2], u[0], u[1], u[2] };
-  alListenerfv(AL_ORIENTATION, directionVectors);
-}
-
-void lovrAudioSetPosition(vec3 position) {
-  vec3_init(state.position, position);
-  alListenerfv(AL_POSITION, position);
-}
-
-void lovrAudioSetVelocity(vec3 velocity) {
-  vec3_init(state.velocity, velocity);
-  alListenerfv(AL_VELOCITY, velocity);
-}
-
 void lovrAudioSetVolume(float volume) {
-  alListenerf(AL_GAIN, volume);
+  ma_device_set_master_volume(&state.devices[AUDIO_PLAYBACK], volume);
 }
 
-void lovrAudioStop() {
-  for (size_t i = 0; i < state.sources.length; i++) {
-    lovrSourceStop(state.sources.data[i]);
-  }
+void lovrAudioSetListenerPose(float position[4], float orientation[4]) {
+  state.spatializer->setListenerPose(position, orientation);
+}
+
+double lovrAudioConvertToSeconds(uint32_t sampleCount, AudioType context) {
+  return sampleCount / (double)state.config[context].sampleRate;
 }
 
 // Source
 
-Source* lovrSourceCreateStatic(SoundData* soundData) {
-  Source* source = lovrAlloc(Source);
-  ALenum format = lovrAudioConvertFormat(soundData->bitDepth, soundData->channelCount);
-  source->type = SOURCE_STATIC;
-  source->soundData = soundData;
-  alGenSources(1, &source->id);
-  alGenBuffers(1, source->buffers);
-  alBufferData(source->buffers[0], format, soundData->blob->data, (ALsizei) soundData->blob->size, soundData->sampleRate);
-  alSourcei(source->id, AL_BUFFER, source->buffers[0]);
-  lovrRetain(soundData);
-  return source;
+static void _lovrSourceAssignConverter(Source *source) {
+  source->converter = NULL;
+  for (size_t i = 0; i < state.converters.length; i++) {
+    ma_data_converter* converter = state.converters.data[i];
+    if (converter->config.formatIn != miniAudioFormatFromLovr[source->sound->format]) continue;
+    if (converter->config.sampleRateIn != source->sound->sampleRate) continue;
+    if (converter->config.channelsIn != source->sound->channels) continue;
+    if (converter->config.channelsOut != outputChannelCountForSource(source)) continue;
+    source->converter = converter;
+    break;
+  }
+
+  if (!source->converter) {
+    ma_data_converter_config config = ma_data_converter_config_init_default();
+    config.formatIn = miniAudioFormatFromLovr[source->sound->format];
+    config.formatOut = miniAudioFormatFromLovr[OUTPUT_FORMAT];
+    config.channelsIn = source->sound->channels;
+    config.channelsOut = outputChannelCountForSource(source);
+    config.sampleRateIn = source->sound->sampleRate;
+    config.sampleRateOut = state.config[AUDIO_PLAYBACK].sampleRate;
+
+    ma_data_converter *converter = malloc(sizeof(ma_data_converter));
+    ma_result converterStatus = ma_data_converter_init(&config, converter);
+    lovrAssert(converterStatus == MA_SUCCESS, "Problem creating Source data converter #%d: %d", state.converters.length, converterStatus);
+    
+    arr_expand(&state.converters, 1);
+    state.converters.data[state.converters.length++] = source->converter = converter;
+  }
 }
 
-Source* lovrSourceCreateStream(AudioStream* stream) {
+Source* lovrSourceCreate(SoundData* sound, bool spatial) {
   Source* source = lovrAlloc(Source);
-  source->type = SOURCE_STREAM;
-  source->stream = stream;
-  alGenSources(1, &source->id);
-  alGenBuffers(SOURCE_BUFFERS, source->buffers);
-  lovrRetain(stream);
+  source->sound = sound;
+  lovrRetain(source->sound);
+  source->volume = 1.f;
+  
+  source->spatial = spatial;
+  mat4_identity(source->transform);
+  _lovrSourceAssignConverter(source);
+
   return source;
 }
 
 void lovrSourceDestroy(void* ref) {
   Source* source = ref;
-  alDeleteSources(1, &source->id);
-  alDeleteBuffers(source->type == SOURCE_STATIC ? 1 : SOURCE_BUFFERS, source->buffers);
-  lovrRelease(SoundData, source->soundData);
-  lovrRelease(AudioStream, source->stream);
-}
-
-SourceType lovrSourceGetType(Source* source) {
-  return source->type;
-}
-
-uint32_t lovrSourceGetBitDepth(Source* source) {
-  return source->type == SOURCE_STATIC ? source->soundData->bitDepth : source->stream->bitDepth;
-}
-
-void lovrSourceGetCone(Source* source, float* innerAngle, float* outerAngle, float* outerGain) {
-  alGetSourcef(source->id, AL_CONE_INNER_ANGLE, innerAngle);
-  alGetSourcef(source->id, AL_CONE_OUTER_ANGLE, outerAngle);
-  alGetSourcef(source->id, AL_CONE_OUTER_GAIN, outerGain);
-  *innerAngle *= (float) M_PI / 180.f;
-  *outerAngle *= (float) M_PI / 180.f;
-}
-
-uint32_t lovrSourceGetChannelCount(Source* source) {
-  return source->type == SOURCE_STATIC ? source->soundData->channelCount : source->stream->channelCount;
-}
-
-void lovrSourceGetOrientation(Source* source, quat orientation) {
-  float v[4], forward[4] = { 0.f, 0.f, -1.f };
-  alGetSourcefv(source->id, AL_DIRECTION, v);
-  quat_between(orientation, forward, v);
-}
-
-size_t lovrSourceGetDuration(Source* source) {
-  return source->type == SOURCE_STATIC ? source->soundData->samples : source->stream->samples;
-}
-
-void lovrSourceGetFalloff(Source* source, float* reference, float* max, float* rolloff) {
-  alGetSourcef(source->id, AL_REFERENCE_DISTANCE, reference);
-  alGetSourcef(source->id, AL_MAX_DISTANCE, max);
-  alGetSourcef(source->id, AL_ROLLOFF_FACTOR, rolloff);
-}
-
-float lovrSourceGetPitch(Source* source) {
-  float pitch;
-  alGetSourcef(source->id, AL_PITCH, &pitch);
-  return pitch;
-}
-
-void lovrSourceGetPosition(Source* source, vec3 position) {
-  alGetSourcefv(source->id, AL_POSITION, position);
-}
-
-uint32_t lovrSourceGetSampleRate(Source* source) {
-  return source->type == SOURCE_STATIC ? source->soundData->sampleRate : source->stream->sampleRate;
-}
-
-void lovrSourceGetVelocity(Source* source, vec3 velocity) {
-  alGetSourcefv(source->id, AL_VELOCITY, velocity);
-}
-
-float lovrSourceGetVolume(Source* source) {
-  float volume;
-  alGetSourcef(source->id, AL_GAIN, &volume);
-  return volume;
-}
-
-void lovrSourceGetVolumeLimits(Source* source, float* min, float* max) {
-  alGetSourcef(source->id, AL_MIN_GAIN, min);
-  alGetSourcef(source->id, AL_MAX_GAIN, max);
-}
-
-bool lovrSourceIsLooping(Source* source) {
-  return source->isLooping;
-}
-
-bool lovrSourceIsPlaying(Source* source) {
-  ALenum state;
-  alGetSourcei(source->id, AL_SOURCE_STATE, &state);
-  return state == AL_PLAYING;
-}
-
-bool lovrSourceIsRelative(Source* source) {
-  int isRelative;
-  alGetSourcei(source->id, AL_SOURCE_RELATIVE, &isRelative);
-  return isRelative == AL_TRUE;
-}
-
-void lovrSourcePause(Source* source) {
-  alSourcePause(source->id);
+  lovrRelease(SoundData, source->sound);
 }
 
 void lovrSourcePlay(Source* source) {
-  ALenum state;
-  alGetSourcei(source->id, AL_SOURCE_STATE, &state);
+  ma_mutex_lock(&state.playbackLock);
 
-  if (source->type == SOURCE_STATIC) {
-    if (state != AL_PLAYING) {
-      alSourcePlay(source->id);
-    }
-  } else {
-    switch (state) {
-      case AL_INITIAL:
-      case AL_STOPPED:
-        alSourcei(source->id, AL_BUFFER, AL_NONE);
-        lovrSourceStream(source, source->buffers, SOURCE_BUFFERS);
-        alSourcePlay(source->id);
-        break;
-      case AL_PAUSED:
-        alSourcePlay(source->id);
-        break;
-      case AL_PLAYING:
-        break;
-    }
+  source->playing = true;
+
+  if (!source->tracked) {
+    lovrRetain(source);
+    source->tracked = true;
+    source->next = state.sources;
+    state.sources = source;
   }
+
+  ma_mutex_unlock(&state.playbackLock);
 }
 
-void lovrSourceSeek(Source* source, size_t sample) {
-  if (source->type == SOURCE_STATIC) {
-    alSourcef(source->id, AL_SAMPLE_OFFSET, sample);
-  } else {
-    ALenum state;
-    alGetSourcei(source->id, AL_SOURCE_STATE, &state);
-    bool wasPaused = state == AL_PAUSED;
-    alSourceStop(source->id);
-    lovrAudioStreamSeek(source->stream, sample);
-    lovrSourcePlay(source);
-    if (wasPaused) {
-      lovrSourcePause(source);
-    }
-  }
-}
-
-void lovrSourceSetCone(Source* source, float innerAngle, float outerAngle, float outerGain) {
-  alSourcef(source->id, AL_CONE_INNER_ANGLE, innerAngle * 180.f / (float) M_PI);
-  alSourcef(source->id, AL_CONE_OUTER_ANGLE, outerAngle * 180.f / (float) M_PI);
-  alSourcef(source->id, AL_CONE_OUTER_GAIN, outerGain);
-}
-
-void lovrSourceSetOrientation(Source* source, quat orientation) {
-  float v[4] = { 0.f, 0.f, -1.f };
-  quat_rotate(orientation, v);
-  alSource3f(source->id, AL_DIRECTION, v[0], v[1], v[2]);
-}
-
-void lovrSourceSetFalloff(Source* source, float reference, float max, float rolloff) {
-  lovrAssert(lovrSourceGetChannelCount(source) == 1, "Positional audio is only supported for mono sources");
-  alSourcef(source->id, AL_REFERENCE_DISTANCE, reference);
-  alSourcef(source->id, AL_MAX_DISTANCE, max);
-  alSourcef(source->id, AL_ROLLOFF_FACTOR, rolloff);
-}
-
-void lovrSourceSetLooping(Source* source, bool isLooping) {
-  lovrAssert(!source->stream || !lovrAudioStreamIsRaw(source->stream), "Can't loop a raw stream");
-  source->isLooping = isLooping;
-  if (source->type == SOURCE_STATIC) {
-    alSourcei(source->id, AL_LOOPING, isLooping ? AL_TRUE : AL_FALSE);
-  }
-}
-
-void lovrSourceSetPitch(Source* source, float pitch) {
-  alSourcef(source->id, AL_PITCH, pitch);
-}
-
-void lovrSourceSetPosition(Source* source, vec3 position) {
-  lovrAssert(lovrSourceGetChannelCount(source) == 1, "Positional audio is only supported for mono sources");
-  alSource3f(source->id, AL_POSITION, position[0], position[1], position[2]);
-}
-
-void lovrSourceSetRelative(Source* source, bool isRelative) {
-  alSourcei(source->id, AL_SOURCE_RELATIVE, isRelative ? AL_TRUE : AL_FALSE);
-}
-
-void lovrSourceSetVelocity(Source* source, vec3 velocity) {
-  alSource3f(source->id, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
-}
-
-void lovrSourceSetVolume(Source* source, float volume) {
-  alSourcef(source->id, AL_GAIN, volume);
-}
-
-void lovrSourceSetVolumeLimits(Source* source, float min, float max) {
-  alSourcef(source->id, AL_MIN_GAIN, min);
-  alSourcef(source->id, AL_MAX_GAIN, max);
+void lovrSourcePause(Source* source) {
+  source->playing = false;
 }
 
 void lovrSourceStop(Source* source) {
-  if (source->type == SOURCE_STATIC) {
-    alSourceStop(source->id);
+  lovrSourcePause(source);
+  lovrSourceSetTime(source, 0);
+}
+
+bool lovrSourceIsPlaying(Source* source) {
+  return source->playing;
+}
+
+bool lovrSourceIsLooping(Source* source) {
+  return source->looping;
+}
+
+void lovrSourceSetLooping(Source* source, bool loop) {
+  lovrAssert(loop == false || lovrSoundDataIsStream(source->sound) == false, "Can't loop streams");
+  source->looping = loop;
+}
+
+float lovrSourceGetVolume(Source* source) {
+  return source->volume;
+}
+
+void lovrSourceSetVolume(Source* source, float volume) {
+  ma_mutex_lock(&state.playbackLock);
+  source->volume = volume;
+  ma_mutex_unlock(&state.playbackLock);
+}
+
+bool lovrSourceGetSpatial(Source *source) {
+  return source->spatial;
+}
+
+void lovrSourceSetPose(Source *source, float position[4], float orientation[4]) {
+  ma_mutex_lock(&state.playbackLock);
+  mat4_identity(source->transform);
+  mat4_translate(source->transform, position[0], position[1], position[2]);
+  mat4_rotate(source->transform, orientation[0], orientation[1], orientation[2], orientation[3]);
+  ma_mutex_unlock(&state.playbackLock);
+}
+
+uint32_t lovrSourceGetTime(Source* source) {
+  if (lovrSoundDataIsStream(source->sound)) {
+    return 0;
   } else {
-    alSourceStop(source->id);
-    alSourcei(source->id, AL_BUFFER, AL_NONE);
-    lovrAudioStreamRewind(source->stream);
+    return source->offset;
   }
 }
 
-// Fills buffers with data and queues them, called once initially and over time to stream more data
-void lovrSourceStream(Source* source, ALuint* buffers, size_t count) {
-  if (source->type == SOURCE_STATIC) {
-    return;
+void lovrSourceSetTime(Source* source, uint32_t time) {
+  ma_mutex_lock(&state.playbackLock);
+  source->offset = time;
+  ma_mutex_unlock(&state.playbackLock);
+}
+
+SoundData* lovrSourceGetSoundData(Source* source) {
+  return source->sound;
+}
+
+// Capture
+
+uint32_t lovrAudioGetCaptureSampleCount() {
+  // note: must only be called from ONE thread!! ma_pcm_rb only promises
+  // thread safety with ONE reader and ONE writer thread.
+  return ma_pcm_rb_available_read(&state.captureRingbuffer);
+}
+
+static const char *format2string(SampleFormat f) { return f == SAMPLE_I16 ? "i16" : "f32"; }
+
+struct SoundData* lovrAudioCapture(uint32_t frameCount, SoundData *soundData, uint32_t offset) {
+
+  uint32_t bufferedFrames = lovrAudioGetCaptureSampleCount();
+  if (frameCount == 0 || frameCount > bufferedFrames) {
+    frameCount = bufferedFrames;
   }
 
-  AudioStream* stream = source->stream;
-  ALenum format = lovrAudioConvertFormat(stream->bitDepth, stream->channelCount);
-  uint32_t frequency = stream->sampleRate;
-  size_t samples = 0;
-  size_t n = 0;
-
-  // Keep decoding until there is nothing left to decode or all the buffers are filled
-  while (n < count && (samples = lovrAudioStreamDecode(stream, NULL, 0)) != 0) {
-    alBufferData(buffers[n++], format, stream->buffer, (ALsizei) (samples * sizeof(ALshort)), frequency);
-  }
-
-  alSourceQueueBuffers(source->id, (ALsizei) n, buffers);
-
-  if (samples == 0 && source->isLooping && n < count) {
-    lovrAudioStreamRewind(stream);
-    lovrSourceStream(source, buffers + n, count - n);
-    return;
-  }
-}
-
-size_t lovrSourceTell(Source* source) {
-  switch (source->type) {
-    case SOURCE_STATIC: {
-      float offset;
-      alGetSourcef(source->id, AL_SAMPLE_OFFSET, &offset);
-      return offset;
-    }
-
-    case SOURCE_STREAM: {
-      size_t decoderOffset = lovrAudioStreamTell(source->stream);
-      size_t samplesPerBuffer = source->stream->bufferSize / source->stream->channelCount / sizeof(ALshort);
-      ALsizei queuedBuffers, sampleOffset;
-      alGetSourcei(source->id, AL_BUFFERS_QUEUED, &queuedBuffers);
-      alGetSourcei(source->id, AL_SAMPLE_OFFSET, &sampleOffset);
-
-      size_t offset = decoderOffset + sampleOffset;
-
-      if (queuedBuffers * samplesPerBuffer > offset) {
-        return offset + source->stream->samples;
-      } else {
-        return offset;
-      }
-      break;
-    }
-
-    default: lovrThrow("Unreachable"); break;
-  }
-}
-
-// Microphone
-
-Microphone* lovrMicrophoneCreate(const char* name, size_t samples, uint32_t sampleRate, uint32_t bitDepth, uint32_t channelCount) {
-  Microphone* microphone = lovrAlloc(Microphone);
-  ALCdevice* device = alcCaptureOpenDevice(name, sampleRate, lovrAudioConvertFormat(bitDepth, channelCount), (ALCsizei) samples);
-  lovrAssert(device, "Error opening capture device for microphone '%s'", name);
-  microphone->device = device;
-  microphone->name = name ? name : alcGetString(device, ALC_CAPTURE_DEVICE_SPECIFIER);
-  microphone->sampleRate = sampleRate;
-  microphone->bitDepth = bitDepth;
-  microphone->channelCount = channelCount;
-  return microphone;
-}
-
-void lovrMicrophoneDestroy(void* ref) {
-  Microphone* microphone = ref;
-  lovrMicrophoneStopRecording(microphone);
-  alcCaptureCloseDevice(microphone->device);
-}
-
-uint32_t lovrMicrophoneGetBitDepth(Microphone* microphone) {
-  return microphone->bitDepth;
-}
-
-uint32_t lovrMicrophoneGetChannelCount(Microphone* microphone) {
-  return microphone->channelCount;
-}
-
-SoundData* lovrMicrophoneGetData(Microphone* microphone, size_t samples, SoundData* soundData, size_t offset) {
-  size_t availableSamples = lovrMicrophoneGetSampleCount(microphone);
-
-  if (!microphone->isRecording || availableSamples == 0) {
+  if (frameCount == 0) {
     return NULL;
   }
 
-  if (samples == 0 || samples > availableSamples) {
-    samples = availableSamples;
-  }
-
   if (soundData == NULL) {
-    soundData = lovrSoundDataCreate(samples, microphone->sampleRate, microphone->bitDepth, microphone->channelCount);
+    soundData = lovrSoundDataCreateRaw(frameCount, CAPTURE_CHANNELS, state.config[AUDIO_CAPTURE].sampleRate, state.config[AUDIO_CAPTURE].format, NULL);
   } else {
-    lovrAssert(soundData->channelCount == microphone->channelCount, "Microphone and SoundData channel counts must match");
-    lovrAssert(soundData->sampleRate == microphone->sampleRate, "Microphone and SoundData sample rates must match");
-    lovrAssert(soundData->bitDepth == microphone->bitDepth, "Microphone and SoundData bit depths must match");
-    lovrAssert(offset + samples <= soundData->samples, "Tried to write samples past the end of a SoundData buffer");
+    lovrAssert(soundData->channels == CAPTURE_CHANNELS, "Capture (%d) and SoundData (%d) channel counts must match", CAPTURE_CHANNELS, soundData->channels);
+    lovrAssert(soundData->sampleRate == state.config[AUDIO_CAPTURE].sampleRate, "Capture (%d) and SoundData (%d) sample rates must match", state.config[AUDIO_CAPTURE].sampleRate, soundData->sampleRate);
+    lovrAssert(soundData->format == state.config[AUDIO_CAPTURE].format, "Capture (%s) and SoundData (%s) formats must match", format2string(state.config[AUDIO_CAPTURE].format), format2string(soundData->format));
+    lovrAssert(offset + frameCount <= soundData->frames, "Tried to write samples past the end of a SoundData buffer");
   }
 
-  uint8_t* data = (uint8_t*) soundData->blob->data + offset * (microphone->bitDepth / 8) * microphone->channelCount;
-  alcCaptureSamples(microphone->device, data, (ALCsizei) samples);
+  uint32_t bytesPerFrame = SampleFormatBytesPerFrame(CAPTURE_CHANNELS, state.config[AUDIO_CAPTURE].format);
+  while(frameCount > 0) {
+    uint32_t availableFramesInRB = frameCount;
+    void *store;
+    ma_result acquire_status = ma_pcm_rb_acquire_read(&state.captureRingbuffer, &availableFramesInRB, &store);
+    if (acquire_status != MA_SUCCESS) {
+      lovrAssert(false, "Failed to acquire ring buffer for read: %d\n", acquire_status);
+      return NULL;
+    }
+    memcpy(soundData->blob->data + offset * bytesPerFrame, store, availableFramesInRB * bytesPerFrame);
+    ma_result commit_status = ma_pcm_rb_commit_read(&state.captureRingbuffer, availableFramesInRB, store);
+    if (commit_status != MA_SUCCESS) {
+      lovrAssert(false, "Failed to commit ring buffer for read: %d\n", acquire_status);
+      return NULL;
+    }
+    frameCount -= availableFramesInRB;
+    offset += availableFramesInRB;
+  }
+
   return soundData;
 }
 
-const char* lovrMicrophoneGetName(Microphone* microphone) {
-  return microphone->name;
-}
-
-size_t lovrMicrophoneGetSampleCount(Microphone* microphone) {
-  if (!microphone->isRecording) {
-    return 0;
+void lovrAudioGetDevices(AudioDevice **outDevices, size_t *outCount) {
+  if(state.deviceInfos) 
+    free(state.deviceInfos);
+  
+  ma_result gettingStatus = ma_context_get_devices(&state.context, NULL, NULL, NULL, NULL);
+  lovrAssert(gettingStatus == MA_SUCCESS, "Failed to enumerate audio devices: %d", gettingStatus);
+  *outCount = state.context.playbackDeviceInfoCount + state.context.captureDeviceInfoCount;
+  *outDevices = state.deviceInfos = calloc(*outCount, sizeof(AudioDevice));
+  for(int i = 0; i < *outCount; i++) {
+    ma_device_info *mainfo = &state.context.pDeviceInfos[i];
+    AudioDevice *lovrInfo = &state.deviceInfos[i];
+    lovrInfo->name = mainfo->name;
+    lovrInfo->type = i < state.context.playbackDeviceInfoCount ? AUDIO_PLAYBACK : AUDIO_CAPTURE;
+    lovrInfo->isDefault = mainfo->isDefault; // remove _private after bumping miniaudio
+    lovrInfo->identifier = &mainfo->id;
+    lovrInfo->minChannels = mainfo->minChannels;
+    lovrInfo->maxChannels = mainfo->maxChannels;
   }
-
-  ALCint samples;
-  alcGetIntegerv(microphone->device, ALC_CAPTURE_SAMPLES, sizeof(ALCint), &samples);
-  return (size_t) samples;
 }
 
-uint32_t lovrMicrophoneGetSampleRate(Microphone* microphone) {
-  return microphone->sampleRate;
-}
+void lovrAudioUseDevice(AudioDeviceIdentifier identifier, int sampleRate, SampleFormat format) {
+  int deviceCount = state.context.playbackDeviceInfoCount + state.context.captureDeviceInfoCount;
+  for(int i = 0; i < deviceCount; i++) {
+    if (identifier == &state.context.pDeviceInfos[i].id) {
+      AudioType type = i < state.context.playbackDeviceInfoCount ? AUDIO_PLAYBACK : AUDIO_CAPTURE;
+      state.config[type].device = identifier;
+      if (sampleRate) state.config[type].sampleRate = sampleRate;
+      if (format != SAMPLE_INVALID) state.config[type].format = format;
+      lovrLog(LOG_INFO, "audio", "Switching to %s device %s (%p)", type?"capture":"playback", state.context.pDeviceInfos[i].name, identifier);
+      ma_device_uninit(&state.devices[type]);
+      if(state.config[type].enable)
+        lovrAudioInitDevice(type);
+      if(state.config[type].start)
+        ma_device_start(&state.devices[type]);
 
-bool lovrMicrophoneIsRecording(Microphone* microphone) {
-  return microphone->isRecording;
-}
-
-void lovrMicrophoneStartRecording(Microphone* microphone) {
-  if (microphone->isRecording) {
-    return;
+      return;
+    }
   }
-
-  alcCaptureStart(microphone->device);
-  microphone->isRecording = true;
-}
-
-void lovrMicrophoneStopRecording(Microphone* microphone) {
-  if (!microphone->isRecording) {
-    return;
-  }
-
-  alcCaptureStop(microphone->device);
-  microphone->isRecording = false;
+  lovrAssert(false, "Couldn't find the given identifier");
 }

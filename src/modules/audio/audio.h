@@ -1,16 +1,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "modules/data/soundData.h"
 
 #pragma once
 
-#define MAX_MICROPHONES 8
-
-struct AudioStream;
 struct SoundData;
 
 typedef struct Source Source;
-typedef struct Microphone Microphone;
+
+typedef enum {
+  AUDIO_PLAYBACK,
+  AUDIO_CAPTURE,
+
+  AUDIO_TYPE_COUNT
+} AudioType;
 
 typedef enum {
   SOURCE_STATIC,
@@ -22,70 +26,52 @@ typedef enum {
   UNIT_SAMPLES
 } TimeUnit;
 
-bool lovrAudioInit(void);
+typedef void* AudioDeviceIdentifier;
+
+typedef struct {
+  bool enable;
+  bool start;
+  AudioDeviceIdentifier device;
+  int sampleRate;
+  SampleFormat format;
+} AudioConfig;
+
+typedef struct {
+  AudioType type;
+  const char *name;
+  bool isDefault;
+  AudioDeviceIdentifier identifier;
+  int minChannels, maxChannels;
+} AudioDevice;
+
+bool lovrAudioInit(AudioConfig config[2]);
 void lovrAudioDestroy(void);
-void lovrAudioUpdate(void);
-void lovrAudioAdd(struct Source* source);
-void lovrAudioGetDopplerEffect(float* factor, float* speedOfSound);
-void lovrAudioGetMicrophoneNames(const char* names[MAX_MICROPHONES], uint32_t* count);
-void lovrAudioGetOrientation(float* orientation);
-void lovrAudioGetPosition(float* position);
-void lovrAudioGetVelocity(float* velocity);
+bool lovrAudioReset(void);
+bool lovrAudioStart(AudioType type);
+bool lovrAudioStop(AudioType type);
 float lovrAudioGetVolume(void);
-bool lovrAudioHas(struct Source* source);
-bool lovrAudioIsSpatialized(void);
-void lovrAudioPause(void);
-void lovrAudioSetDopplerEffect(float factor, float speedOfSound);
-void lovrAudioSetOrientation(float* orientation);
-void lovrAudioSetPosition(float* position);
-void lovrAudioSetVelocity(float* velocity);
 void lovrAudioSetVolume(float volume);
-void lovrAudioStop(void);
+void lovrAudioSetListenerPose(float position[4], float orientation[4]);
+double lovrAudioConvertToSeconds(uint32_t sampleCount, AudioType context);
 
-Source* lovrSourceCreateStatic(struct SoundData* soundData);
-Source* lovrSourceCreateStream(struct AudioStream* stream);
+Source* lovrSourceCreate(struct SoundData* soundData, bool spatial);
 void lovrSourceDestroy(void* ref);
-SourceType lovrSourceGetType(Source* source);
-uint32_t lovrSourceGetBitDepth(Source* source);
-uint32_t lovrSourceGetChannelCount(Source* source);
-void lovrSourceGetCone(Source* source, float* innerAngle, float* outerAngle, float* outerGain);
-void lovrSourceGetOrientation(Source* source, float* orientation);
-size_t lovrSourceGetDuration(Source* source);
-void lovrSourceGetFalloff(Source* source, float* reference, float* max, float* rolloff);
-float lovrSourceGetPitch(Source* source);
-void lovrSourceGetPosition(Source* source, float* position);
-void lovrSourceGetVelocity(Source* source, float* velocity);
-uint32_t lovrSourceGetSampleRate(Source* source);
-float lovrSourceGetVolume(Source* source);
-void lovrSourceGetVolumeLimits(Source* source, float* min, float* max);
-bool lovrSourceIsLooping(Source* source);
-bool lovrSourceIsPlaying(Source* source);
-bool lovrSourceIsRelative(Source* source);
-void lovrSourcePause(Source* source);
 void lovrSourcePlay(Source* source);
-void lovrSourceSeek(Source* source, size_t sample);
-void lovrSourceSetCone(Source* source, float inner, float outer, float outerGain);
-void lovrSourceSetOrientation(Source* source, float* orientation);
-void lovrSourceSetFalloff(Source* source, float reference, float max, float rolloff);
-void lovrSourceSetLooping(Source* source, bool isLooping);
-void lovrSourceSetPitch(Source* source, float pitch);
-void lovrSourceSetPosition(Source* source, float* position);
-void lovrSourceSetRelative(Source* source, bool isRelative);
-void lovrSourceSetVelocity(Source* source, float* velocity);
-void lovrSourceSetVolume(Source* source, float volume);
-void lovrSourceSetVolumeLimits(Source* source, float min, float max);
+void lovrSourcePause(Source* source);
 void lovrSourceStop(Source* source);
-void lovrSourceStream(Source* source, uint32_t* buffers, size_t count);
-size_t lovrSourceTell(Source* source);
+bool lovrSourceIsPlaying(Source* source);
+bool lovrSourceIsLooping(Source* source);
+void lovrSourceSetLooping(Source* source, bool isLooping);
+float lovrSourceGetVolume(Source* source);
+void lovrSourceSetVolume(Source* source, float volume);
+bool lovrSourceGetSpatial(Source *source);
+void lovrSourceSetPose(Source *source, float position[4], float orientation[4]);
+uint32_t lovrSourceGetTime(Source* source);
+void lovrSourceSetTime(Source* source, uint32_t sample);
+struct SoundData* lovrSourceGetSoundData(Source* source);
 
-Microphone* lovrMicrophoneCreate(const char* name, size_t samples, uint32_t sampleRate, uint32_t bitDepth, uint32_t channelCount);
-void lovrMicrophoneDestroy(void* ref);
-uint32_t lovrMicrophoneGetBitDepth(Microphone* microphone);
-uint32_t lovrMicrophoneGetChannelCount(Microphone* microphone);
-struct SoundData* lovrMicrophoneGetData(Microphone* microphone, size_t samples, struct SoundData* soundData, size_t offset);
-const char* lovrMicrophoneGetName(Microphone* microphone);
-size_t lovrMicrophoneGetSampleCount(Microphone* microphone);
-uint32_t lovrMicrophoneGetSampleRate(Microphone* microphone);
-bool lovrMicrophoneIsRecording(Microphone* microphone);
-void lovrMicrophoneStartRecording(Microphone* microphone);
-void lovrMicrophoneStopRecording(Microphone* microphone);
+uint32_t lovrAudioGetCaptureSampleCount();
+struct SoundData* lovrAudioCapture(uint32_t sampleCount, struct SoundData *soundData, uint32_t offset);
+
+void lovrAudioGetDevices(AudioDevice **outDevices, size_t *outCount);
+void lovrAudioUseDevice(AudioDeviceIdentifier identifier, int sampleRate, SampleFormat format);
