@@ -485,6 +485,7 @@ void lovrPlatformRequestPermission(Permission permission) {
     }
 
     (*state.jni)->CallVoidMethod(state.jni, activity, requestAudioCapturePermission);
+    (*state.jni)->DeleteLocalRef(state.jni, class);
   }
 }
 
