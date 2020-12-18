@@ -433,12 +433,22 @@ void lovrAudioGetDevices(AudioDevice **outDevices, size_t *outCount) {
 void lovrAudioUseDevice(AudioDeviceIdentifier identifier, int sampleRate, SampleFormat format) {
   int deviceCount = state.context.playbackDeviceInfoCount + state.context.captureDeviceInfoCount;
   for(int i = 0; i < deviceCount; i++) {
-    if (identifier == &state.context.pDeviceInfos[i].id) {
+    ma_device_info *device = &state.context.pDeviceInfos[i];
+    if (identifier == &device->id) {
       AudioType type = i < state.context.playbackDeviceInfoCount ? AUDIO_PLAYBACK : AUDIO_CAPTURE;
       state.config[type].device = identifier;
+#ifdef ANDROID
+      // XX<nevyn> miniaudio doesn't seem to be happy to set a specific device an android (fails with
+      // error -2 on device init). Since there is only one playback and one capture device in OpenSL,
+      // we can just set this to NULL and only use this call to apply sample rate and format.
+      state.config[type].device = NULL;
+#endif
       if (sampleRate) state.config[type].sampleRate = sampleRate;
       if (format != SAMPLE_INVALID) state.config[type].format = format;
-      lovrLog(LOG_INFO, "audio", "Switching to %s device %s (%p)", type?"capture":"playback", state.context.pDeviceInfos[i].name, identifier);
+      lovrLog(LOG_INFO, "audio", 
+        "Switching to %s%s device %s (%p)", 
+        device->isDefault?"default ":"", type?"capture":"playback", device->name, identifier
+      );
       ma_device_uninit(&state.devices[type]);
       if(state.config[type].enable)
         lovrAudioInitDevice(type);
