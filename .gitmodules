@@ -21,7 +21,7 @@
 	url = https://github.com/ValveSoftware/openvr
 [submodule "deps/luajit"]
 	path = deps/luajit
-	url = https://github.com/alloverse/LuaJIT
+	url = https://github.com/WohlSoft/LuaJIT
 [submodule "deps/oculus-mobile"]
 	path = deps/oculus-mobile
 	url = https://github.com/alloverse/ovr_sdk_mobile
