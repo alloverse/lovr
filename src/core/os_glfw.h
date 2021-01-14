@@ -268,6 +268,8 @@ bool lovrPlatformCreateWindow(const WindowFlags* flags) {
   glfwSetKeyCallback(glfwState.window, onKeyboardEvent);
   glfwSetCharCallback(glfwState.window, onTextEvent);
   lovrPlatformSetSwapInterval(flags->vsync);
+  
+  lovrPlatformOnWindowFocus(glfwState.onWindowFocus); // trigger first-callback after window is created
   return true;
 }
 
@@ -315,7 +317,7 @@ void lovrPlatformOnQuitRequest(quitCallback callback) {
 
 void lovrPlatformOnWindowFocus(windowFocusCallback callback) {
   glfwState.onWindowFocus = callback;
-  if (callback) {
+  if (callback && glfwState.window) {
     int focused = glfwGetWindowAttrib(glfwState.window, GLFW_FOCUSED);
     callback(focused);
   }
