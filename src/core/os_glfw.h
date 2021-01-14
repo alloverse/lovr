@@ -315,6 +315,10 @@ void lovrPlatformOnQuitRequest(quitCallback callback) {
 
 void lovrPlatformOnWindowFocus(windowFocusCallback callback) {
   glfwState.onWindowFocus = callback;
+  if (callback) {
+    int focused = glfwGetWindowAttrib(glfwState.window, GLFW_FOCUSED);
+    callback(focused);
+  }
 }
 
 void lovrPlatformOnWindowResize(windowResizeCallback callback) {
