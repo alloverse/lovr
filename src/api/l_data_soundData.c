@@ -1,40 +1,85 @@
 #include "api.h"
 #include "data/soundData.h"
+#include "data/blob.h"
+#include "core/ref.h"
+#include <stdlib.h>
 
-static int l_lovrSoundDataGetBitDepth(lua_State* L) {
-  SoundData* soundData = luax_checktype(L, 1, SoundData);
-  lua_pushinteger(L, soundData->bitDepth);
-  return 1;
-}
+StringEntry lovrTimeUnit[] = {
+  [UNIT_SECONDS] = ENTRY("seconds"),
+  [UNIT_SAMPLES] = ENTRY("samples"),
+  { 0 }
+};
 
-static int l_lovrSoundDataGetChannelCount(lua_State* L) {
+static int l_lovrSoundDataGetBlob(lua_State* L) {
   SoundData* soundData = luax_checktype(L, 1, SoundData);
-  lua_pushinteger(L, soundData->channelCount);
+  Blob* blob = soundData->blob;
+  luax_pushtype(L, Blob, blob);
   return 1;
 }
 
 static int l_lovrSoundDataGetDuration(lua_State* L) {
   SoundData* soundData = luax_checktype(L, 1, SoundData);
-  lua_pushnumber(L, soundData->samples / (float) soundData->sampleRate);
+  TimeUnit units = luax_checkenum(L, 2, TimeUnit, "seconds");
+  uint32_t frames = lovrSoundDataGetDuration(soundData);
+  if (units == UNIT_SECONDS) {
+    lua_pushnumber(L, (double) frames / soundData->sampleRate);
+  } else {
+    lua_pushinteger(L, frames);
+  }
+
   return 1;
 }
 
-static int l_lovrSoundDataGetSample(lua_State* L) {
-  SoundData* soundData = luax_checktype(L, 1, SoundData);
-  int index = luaL_checkinteger(L, 2);
-  lua_pushnumber(L, lovrSoundDataGetSample(soundData, index));
+static const char *format2string(SampleFormat f) { switch(f) {
+  case SAMPLE_F32: return "f32";
+  case SAMPLE_I16: return "i16";
+  case SAMPLE_INVALID: return "invalid";
+}}
+
+// soundData:read(dest, {size}, {offset}) -> framesRead
+// soundData:read({size}) -> framesRead
+static int l_lovrSoundDataRead(lua_State* L) {
+  //struct SoundData* soundData, uint32_t offset, uint32_t count, void* data
+  SoundData* source = luax_checktype(L, 1, SoundData);
+  int index = 2;
+  SoundData* dest = luax_totype(L, index, SoundData);
+  if (dest) index++;
+  size_t frameCount = lua_type(L, index) == LUA_TNUMBER ? lua_tointeger(L, index++) : lovrSoundDataGetDuration(source);
+  size_t offset = dest ? luaL_optinteger(L, index, 0) : 0;
+  bool shouldRelease = false;
+  if (dest == NULL) {
+    dest = lovrSoundDataCreateRaw(frameCount, source->channels, source->sampleRate, source->format, NULL);
+    shouldRelease = true;
+  } else {
+    lovrAssert(dest->channels == source->channels, "Source (%d) and destination (%d) channel counts must match", source->channels, dest->channels);
+    lovrAssert(dest->sampleRate == source->sampleRate, "Source (%d) and destination (%d) sample rates must match", source->sampleRate, dest->sampleRate);
+    lovrAssert(dest->format == source->format, "Source (%s) and destination (%s) formats must match", format2string(source->format), format2string(dest->format));
+    lovrAssert(offset + frameCount <= dest->frames, "Tried to write samples past the end of a SoundData buffer");
+    lovrAssert(dest->blob, "Can't read into a stream destination");
+  }
+
+  size_t outFrames = source->read(source, offset, frameCount, dest->blob->data);
+  dest->frames = outFrames;
+  dest->blob->size = outFrames * SampleFormatBytesPerFrame(dest->channels, dest->format);
+  luax_pushtype(L, SoundData, dest);
+  if (shouldRelease) lovrRelease(SoundData, dest);
+
   return 1;
 }
 
-static int l_lovrSoundDataGetSampleCount(lua_State* L) {
+static int l_lovrSoundDataAppend(lua_State* L) {
   SoundData* soundData = luax_checktype(L, 1, SoundData);
-  lua_pushinteger(L, soundData->samples);
-  return 1;
-}
-
-static int l_lovrSoundDataGetSampleRate(lua_State* L) {
-  SoundData* soundData = luax_checktype(L, 1, SoundData);
-  lua_pushinteger(L, soundData->sampleRate);
+  Blob* blob = luax_totype(L, 2, Blob);
+  SoundData* sound = luax_totype(L, 2, SoundData);
+  size_t appendedSamples = 0;
+  if (sound) {
+    appendedSamples = lovrSoundDataStreamAppendSound(soundData, sound);
+  } else if (blob) {
+    appendedSamples = lovrSoundDataStreamAppendBlob(soundData, blob);
+  } else {
+    luaL_argerror(L, 2, "Invalid blob appended");
+  }
+  lua_pushinteger(L, appendedSamples);
   return 1;
 }
 
@@ -46,21 +91,11 @@ static int l_lovrSoundDataSetSample(lua_State* L) {
   return 0;
 }
 
-static int l_lovrSoundDataGetBlob(lua_State* L) {
-  SoundData* soundData = luax_checktype(L, 1, SoundData);
-  Blob* blob = soundData->blob;
-  luax_pushtype(L, Blob, blob);
-  return 1;
-}
-
 const luaL_Reg lovrSoundData[] = {
-  { "getBitDepth", l_lovrSoundDataGetBitDepth },
-  { "getChannelCount", l_lovrSoundDataGetChannelCount },
-  { "getDuration", l_lovrSoundDataGetDuration },
-  { "getSample", l_lovrSoundDataGetSample },
-  { "getSampleCount", l_lovrSoundDataGetSampleCount },
-  { "getSampleRate", l_lovrSoundDataGetSampleRate },
-  { "setSample", l_lovrSoundDataSetSample },
   { "getBlob", l_lovrSoundDataGetBlob },
+  { "getDuration", l_lovrSoundDataGetDuration },
+  { "read", l_lovrSoundDataRead },
+  { "append", l_lovrSoundDataAppend },
+  { "setSample", l_lovrSoundDataSetSample },
   { NULL, NULL }
 };
