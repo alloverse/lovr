@@ -1,11 +1,8 @@
 #include "graphics/font.h"
 #include "graphics/texture.h"
 #include "data/rasterizer.h"
-#include "data/textureData.h"
-#include "core/arr.h"
+#include "data/image.h"
 #include "core/map.h"
-#include "core/ref.h"
-#include "core/utf.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -21,10 +18,13 @@ typedef struct {
 } FontAtlas;
 
 struct Font {
+  uint32_t ref;
   Rasterizer* rasterizer;
   Texture* texture;
   FontAtlas atlas;
   map_t kerning;
+  double spread;
+  uint32_t padding;
   float lineHeight;
   float pixelDensity;
   bool flip;
@@ -49,26 +49,33 @@ static void lovrFontAddGlyph(Font* font, Glyph* glyph);
 static void lovrFontExpandTexture(Font* font);
 static void lovrFontCreateTexture(Font* font);
 
-Font* lovrFontCreate(Rasterizer* rasterizer) {
-  Font* font = lovrAlloc(Font);
+Font* lovrFontCreate(Rasterizer* rasterizer, uint32_t padding, double spread) {
+  Font* font = calloc(1, sizeof(Font));
+  lovrAssert(font, "Out of memory");
+  font->ref = 1;
+
   lovrRetain(rasterizer);
   font->rasterizer = rasterizer;
+  font->padding = padding;
+  font->spread = spread;
   font->lineHeight = 1.f;
-  font->pixelDensity = (float) font->rasterizer->height;
+  font->pixelDensity = (float) lovrRasterizerGetHeight(rasterizer);
   map_init(&font->kerning, 0);
 
   // Atlas
-  uint32_t padding = 1;
-  font->atlas.x = padding;
-  font->atlas.y = padding;
-  font->atlas.width = 128;
-  font->atlas.height = 128;
-  font->atlas.padding = padding;
-  arr_init(&font->atlas.glyphs);
+  // The atlas padding affects the padding of the edges of the atlas and the space between rows.
+  // It is different from the main font->padding, which is the padding on each individual glyph.
+  uint32_t atlasPadding = 1;
+  font->atlas.x = atlasPadding;
+  font->atlas.y = atlasPadding;
+  font->atlas.width = 256;
+  font->atlas.height = 256;
+  font->atlas.padding = atlasPadding;
+  arr_init(&font->atlas.glyphs, realloc);
   map_init(&font->atlas.glyphMap, 0);
 
   // Set initial atlas size
-  while (font->atlas.height < 4 * rasterizer->size) {
+  while (font->atlas.height < 4 * lovrRasterizerGetSize(rasterizer)) {
     lovrFontExpandTexture(font);
   }
 
@@ -80,14 +87,15 @@ Font* lovrFontCreate(Rasterizer* rasterizer) {
 
 void lovrFontDestroy(void* ref) {
   Font* font = ref;
-  lovrRelease(Rasterizer, font->rasterizer);
-  lovrRelease(Texture, font->texture);
+  lovrRelease(font->rasterizer, lovrRasterizerDestroy);
+  lovrRelease(font->texture, lovrTextureDestroy);
   for (size_t i = 0; i < font->atlas.glyphs.length; i++) {
-    lovrRelease(TextureData, font->atlas.glyphs.data[i].data);
+    lovrRelease(font->atlas.glyphs.data[i].data, lovrImageDestroy);
   }
   arr_free(&font->atlas.glyphs);
   map_free(&font->atlas.glyphMap);
   map_free(&font->kerning);
+  free(font);
 }
 
 Rasterizer* lovrFontGetRasterizer(Font* font) {
@@ -102,8 +110,10 @@ void lovrFontRender(Font* font, const char* str, size_t length, float wrap, Hori
   FontAtlas* atlas = &font->atlas;
   bool flip = font->flip;
 
+  int height = lovrRasterizerGetHeight(font->rasterizer);
+
   float cx = 0.f;
-  float cy = -font->rasterizer->height * .8f * (flip ? -1.f : 1.f);
+  float cy = -height * .8f * (flip ? -1.f : 1.f);
   float u = atlas->width;
   float v = atlas->height;
   float scale = 1.f / font->pixelDensity;
@@ -122,13 +132,15 @@ void lovrFontRender(Font* font, const char* str, size_t length, float wrap, Hori
   while ((bytes = utf8_decode(str, end, &codepoint)) > 0) {
 
     // Newlines
-    if (codepoint == '\n' || (wrap && cx * scale > wrap && codepoint == ' ')) {
+    if (codepoint == '\n' || (wrap && cx * scale > wrap && (codepoint == ' ' || previous == ' '))) {
       lineStart = lovrFontAlignLine(lineStart, vertexCursor, cx, halign);
       cx = 0.f;
-      cy -= font->rasterizer->height * font->lineHeight * (flip ? -1.f : 1.f);
+      cy -= height * font->lineHeight * (flip ? -1.f : 1.f);
       previous = '\0';
-      str += bytes;
-      continue;
+      if (codepoint == ' ' || codepoint == '\n') {
+        str += bytes;
+        continue;
+      }
     }
 
     // Tabs
@@ -154,8 +166,8 @@ void lovrFontRender(Font* font, const char* str, size_t length, float wrap, Hori
 
     // Triangles
     if (glyph->w > 0 && glyph->h > 0) {
-      float x1 = cx + glyph->dx - GLYPH_PADDING;
-      float y1 = cy + (glyph->dy + GLYPH_PADDING) * (flip ? -1.f : 1.f);
+      float x1 = cx + glyph->dx - font->padding;
+      float y1 = cy + (glyph->dy + font->padding) * (flip ? -1.f : 1.f);
       float x2 = x1 + glyph->tw;
       float y2 = y1 - glyph->th * (flip ? -1.f : 1.f);
       float s1 = glyph->x / u;
@@ -227,23 +239,31 @@ void lovrFontMeasure(Font* font, const char* str, size_t length, float wrap, flo
   }
 
   *width = MAX(*width, x * scale);
-  *height = ((*lineCount + 1) * font->rasterizer->height * font->lineHeight) * (font->flip ? -1 : 1);
+  *height = ((*lineCount + 1) * lovrRasterizerGetHeight(font->rasterizer) * font->lineHeight) * (font->flip ? -1 : 1);
+}
+
+uint32_t lovrFontGetPadding(Font* font) {
+  return font->padding;
+}
+
+double lovrFontGetSpread(Font* font) {
+  return font->spread;
 }
 
 float lovrFontGetHeight(Font* font) {
-  return font->rasterizer->height / font->pixelDensity;
+  return lovrRasterizerGetHeight(font->rasterizer) / font->pixelDensity;
 }
 
 float lovrFontGetAscent(Font* font) {
-  return font->rasterizer->ascent / font->pixelDensity;
+  return lovrRasterizerGetAscent(font->rasterizer) / font->pixelDensity;
 }
 
 float lovrFontGetDescent(Font* font) {
-  return font->rasterizer->descent / font->pixelDensity;
+  return lovrRasterizerGetDescent(font->rasterizer) / font->pixelDensity;
 }
 
 float lovrFontGetBaseline(Font* font) {
-  return font->rasterizer->height * .8f / font->pixelDensity;
+  return lovrRasterizerGetHeight(font->rasterizer) * .8f / font->pixelDensity;
 }
 
 float lovrFontGetLineHeight(Font* font) {
@@ -281,7 +301,7 @@ float lovrFontGetPixelDensity(Font* font) {
 
 void lovrFontSetPixelDensity(Font* font, float pixelDensity) {
   if (pixelDensity <= 0) {
-    pixelDensity = font->rasterizer->height;
+    pixelDensity = lovrRasterizerGetHeight(font->rasterizer);
   }
 
   font->pixelDensity = pixelDensity;
@@ -296,7 +316,7 @@ static Glyph* lovrFontGetGlyph(Font* font, uint32_t codepoint) {
   if (index == MAP_NIL) {
     index = atlas->glyphs.length;
     arr_reserve(&atlas->glyphs, atlas->glyphs.length + 1);
-    lovrRasterizerLoadGlyph(font->rasterizer, codepoint, &atlas->glyphs.data[atlas->glyphs.length++]);
+    lovrRasterizerLoadGlyph(font->rasterizer, codepoint, font->padding, font->spread, &atlas->glyphs.data[atlas->glyphs.length++]);
     map_set(&atlas->glyphMap, hash, index);
     lovrFontAddGlyph(font, &atlas->glyphs.data[index]);
   }
@@ -364,13 +384,13 @@ static void lovrFontExpandTexture(Font* font) {
   }
 }
 
-// TODO we only need the TextureData here to clear the texture, but it's a big waste of memory.
+// TODO we only need the Image here to clear the texture, but it's a big waste of memory.
 // Could look into using glClearTexImage when supported to make this more efficient.
 static void lovrFontCreateTexture(Font* font) {
-  lovrRelease(Texture, font->texture);
-  TextureData* textureData = lovrTextureDataCreate(font->atlas.width, font->atlas.height, NULL, 0x0, FORMAT_RGB);
-  font->texture = lovrTextureCreate(TEXTURE_2D, &textureData, 1, false, false, 0);
+  lovrRelease(font->texture, lovrTextureDestroy);
+  Image* image = lovrImageCreate(font->atlas.width, font->atlas.height, NULL, 0x0, FORMAT_RGBA16F);
+  font->texture = lovrTextureCreate(TEXTURE_2D, &image, 1, false, false, 0);
   lovrTextureSetFilter(font->texture, (TextureFilter) { .mode = FILTER_BILINEAR });
   lovrTextureSetWrap(font->texture, (TextureWrap) { .s = WRAP_CLAMP, .t = WRAP_CLAMP });
-  lovrRelease(TextureData, textureData);
+  lovrRelease(image, lovrImageDestroy);
 }

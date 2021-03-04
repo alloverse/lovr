@@ -6,7 +6,6 @@
 #include "graphics/texture.h"
 #include "resources/shaders.h"
 #include "core/maf.h"
-#include "core/ref.h"
 #include <stdlib.h>
 #include <float.h>
 #include <math.h>
@@ -16,6 +15,7 @@ typedef struct {
 } NodeTransform;
 
 struct Model {
+  uint32_t ref;
   struct ModelData* data;
   struct Buffer** buffers;
   struct Mesh** meshes;
@@ -76,7 +76,9 @@ static void renderNode(Model* model, uint32_t nodeIndex, uint32_t instances) {
 }
 
 Model* lovrModelCreate(ModelData* data) {
-  Model* model = lovrAlloc(Model);
+  Model* model = calloc(1, sizeof(Model));
+  lovrAssert(model, "Out of memory");
+  model->ref = 1;
   model->data = data;
   lovrRetain(data);
 
@@ -84,8 +86,8 @@ Model* lovrModelCreate(ModelData* data) {
   if (data->materialCount > 0) {
     model->materials = malloc(data->materialCount * sizeof(Material*));
 
-    if (data->textureCount > 0) {
-      model->textures = calloc(data->textureCount, sizeof(Texture*));
+    if (data->imageCount > 0) {
+      model->textures = calloc(data->imageCount, sizeof(Texture*));
     }
 
     for (uint32_t i = 0; i < data->materialCount; i++) {
@@ -100,13 +102,13 @@ Model* lovrModelCreate(ModelData* data) {
       }
 
       for (uint32_t j = 0; j < MAX_MATERIAL_TEXTURES; j++) {
-        uint32_t index = data->materials[i].textures[j];
+        uint32_t index = data->materials[i].images[j];
 
         if (index != ~0u) {
           if (!model->textures[index]) {
-            TextureData* textureData = data->textures[index];
+            Image* image = data->images[index];
             bool srgb = j == TEXTURE_DIFFUSE || j == TEXTURE_EMISSIVE;
-            model->textures[index] = lovrTextureCreate(TEXTURE_2D, &textureData, 1, srgb, true, 0);
+            model->textures[index] = lovrTextureCreate(TEXTURE_2D, &image, 1, srgb, true, 0);
             lovrTextureSetFilter(model->textures[index], data->materials[i].filters[j]);
             lovrTextureSetWrap(model->textures[index], data->materials[i].wraps[j]);
           }
@@ -128,7 +130,8 @@ Model* lovrModelCreate(ModelData* data) {
     model->meshes = calloc(data->primitiveCount, sizeof(Mesh*));
     for (uint32_t i = 0; i < data->primitiveCount; i++) {
       ModelPrimitive* primitive = &data->primitives[i];
-      model->meshes[i] = lovrMeshCreate(primitive->mode, NULL, 0);
+      uint32_t vertexCount = primitive->attributes[ATTR_POSITION] ? primitive->attributes[ATTR_POSITION]->count : 0;
+      model->meshes[i] = lovrMeshCreate(primitive->mode, NULL, vertexCount);
 
       if (primitive->material != ~0u) {
         lovrMeshSetMaterial(model->meshes[i], model->materials[primitive->material]);
@@ -199,35 +202,36 @@ void lovrModelDestroy(void* ref) {
 
   if (model->buffers) {
     for (uint32_t i = 0; i < model->data->bufferCount; i++) {
-      lovrRelease(Buffer, model->buffers[i]);
+      lovrRelease(model->buffers[i], lovrBufferDestroy);
     }
     free(model->buffers);
   }
 
   if (model->meshes) {
     for (uint32_t i = 0; i < model->data->primitiveCount; i++) {
-      lovrRelease(Mesh, model->meshes[i]);
+      lovrRelease(model->meshes[i], lovrMeshDestroy);
     }
     free(model->meshes);
   }
 
   if (model->textures) {
-    for (uint32_t i = 0; i < model->data->textureCount; i++) {
-      lovrRelease(Texture, model->textures[i]);
+    for (uint32_t i = 0; i < model->data->imageCount; i++) {
+      lovrRelease(model->textures[i], lovrTextureDestroy);
     }
     free(model->textures);
   }
 
   if (model->materials) {
     for (uint32_t i = 0; i < model->data->materialCount; i++) {
-      lovrRelease(Material, model->materials[i]);
+      lovrRelease(model->materials[i], lovrMaterialDestroy);
     }
     free(model->materials);
   }
 
-  lovrRelease(ModelData, model->data);
+  lovrRelease(model->data, lovrModelDataDestroy);
   free(model->globalTransforms);
   free(model->localTransforms);
+  free(model);
 }
 
 ModelData* lovrModelGetModelData(Model* model) {
@@ -271,7 +275,7 @@ void lovrModelAnimate(Model* model, uint32_t animationIndex, float time, float a
     float* (*lerp)(float* a, float* b, float t) = rotate ? quat_slerp : vec3_lerp;
 
     if (keyframe == 0 || keyframe >= channel->keyframeCount) {
-      size_t index = CLAMP(keyframe, 0, channel->keyframeCount - 1);
+      size_t index = MIN(keyframe, channel->keyframeCount - 1);
 
       // For cubic interpolation, each keyframe has 3 parts, and the actual data is in the middle (*3, +1)
       if (channel->smoothing == SMOOTH_CUBIC) {

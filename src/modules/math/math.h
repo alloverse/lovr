@@ -3,10 +3,10 @@
 #pragma once
 
 struct RandomGenerator;
+
 bool lovrMathInit(void);
 void lovrMathDestroy(void);
 struct RandomGenerator* lovrMathGetRandomGenerator(void);
-void lovrMathOrientationToDirection(float angle, float ax, float ay, float az, float* v);
 float lovrMathGammaToLinear(float x);
 float lovrMathLinearToGamma(float x);
 float lovrMathNoise1(float x);

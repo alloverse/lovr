@@ -1,5 +1,4 @@
 #include "filesystem/filesystem.h"
-#include "core/arr.h"
 #include "core/fs.h"
 #include "core/map.h"
 #include "core/os.h"
@@ -59,7 +58,7 @@ static struct {
   size_t savePathLength;
   char savePath[1024];
   char source[1024];
-  char requirePath[2][1024];
+  char requirePath[1024];
   char identity[64];
   bool fused;
 } state;
@@ -108,28 +107,27 @@ static size_t normalize(char* buffer, const char* path, size_t length) {
   return n;
 }
 
-bool lovrFilesystemInit(const char* argExe, const char* argGame, const char* argRoot) {
+bool lovrFilesystemInit(const char* archive) {
   if (state.initialized) return false;
   state.initialized = true;
 
-  arr_init(&state.archives);
+  arr_init(&state.archives, realloc);
   arr_reserve(&state.archives, 2);
 
-  lovrFilesystemSetRequirePath("?.lua;?/init.lua;lua_modules/?.lua;lua_modules/?/init.lua;deps/?.lua;deps/?/init.lua");
-  lovrFilesystemSetCRequirePath("??;lua_modules/??;deps/??");
+  lovrFilesystemSetRequirePath("?.lua;?/init.lua");
 
     // If that didn't work, try mounting an archive passed in from the command line
   if (argGame) {
     state.source[LOVR_PATH_MAX - 1] = '\0';
-    strncpy(state.source, argGame, LOVR_PATH_MAX - 1);
-    if (lovrFilesystemMount(state.source, NULL, true, argRoot)) {
+    strncpy(state.source, archive, LOVR_PATH_MAX - 1);
+    if (lovrFilesystemMount(state.source, NULL, true, NULL)) {
       return true;
     }
   }
 
   // First, try to mount a bundled archive
   const char* root = NULL;
-  if (lovrPlatformGetBundlePath(state.source, LOVR_PATH_MAX, &root) && lovrFilesystemMount(state.source, NULL, true, root)) {
+  if (os_get_bundle_path(state.source, LOVR_PATH_MAX, &root) && lovrFilesystemMount(state.source, NULL, true, root)) {
     state.fused = true;
     return true;
   }
@@ -172,7 +170,7 @@ bool lovrFilesystemMount(const char* path, const char* mountpoint, bool append, 
   }
 
   Archive archive;
-  arr_init(&archive.strings);
+  arr_init(&archive.strings, realloc);
 
   if (!dir_init(&archive, path, mountpoint, root) && !zip_init(&archive, path, mountpoint, root)) {
     arr_free(&archive.strings);
@@ -289,7 +287,7 @@ bool lovrFilesystemSetIdentity(const char* identity, bool precedence) {
   }
 
   // Initialize the save path to the data path
-  size_t cursor = lovrPlatformGetDataDirectory(state.savePath, sizeof(state.savePath));
+  size_t cursor = os_get_data_directory(state.savePath, sizeof(state.savePath));
 
   // If the data path was too long or unavailable, fail
   if (cursor == 0) {
@@ -393,35 +391,27 @@ size_t lovrFilesystemWrite(const char* path, const char* content, size_t size, b
 // Paths
 
 size_t lovrFilesystemGetAppdataDirectory(char* buffer, size_t size) {
-  return lovrPlatformGetDataDirectory(buffer, size);
+  return os_get_data_directory(buffer, size);
 }
 
 size_t lovrFilesystemGetExecutablePath(char* buffer, size_t size) {
-  return lovrPlatformGetExecutablePath(buffer, size);
+  return os_get_executable_path(buffer, size);
 }
 
 size_t lovrFilesystemGetUserDirectory(char* buffer, size_t size) {
-  return lovrPlatformGetHomeDirectory(buffer, size);
+  return os_get_home_directory(buffer, size);
 }
 
 size_t lovrFilesystemGetWorkingDirectory(char* buffer, size_t size) {
-  return lovrPlatformGetWorkingDirectory(buffer, size);
+  return os_get_working_directory(buffer, size);
 }
 
 const char* lovrFilesystemGetRequirePath() {
-  return state.requirePath[0];
-}
-
-const char* lovrFilesystemGetCRequirePath() {
-  return state.requirePath[1];
+  return state.requirePath;
 }
 
 void lovrFilesystemSetRequirePath(const char* requirePath) {
-  strncpy(state.requirePath[0], requirePath, sizeof(state.requirePath[0]) - 1);
-}
-
-void lovrFilesystemSetCRequirePath(const char* requirePath) {
-  strncpy(state.requirePath[1], requirePath, sizeof(state.requirePath[1]) - 1);
+  strncpy(state.requirePath, requirePath, sizeof(state.requirePath) - 1);
 }
 
 // Archive: dir
@@ -604,7 +594,7 @@ static void zip_close(Archive* archive) {
 static bool zip_init(Archive* archive, const char* filename, const char* mountpoint, const char* root) {
   char path[LOVR_PATH_MAX];
   memset(&archive->lookup, 0, sizeof(archive->lookup));
-  arr_init(&archive->nodes);
+  arr_init(&archive->nodes, realloc);
 
   // mmap the zip file, try to parse it, and figure out how many files there are
   archive->zip.data = fs_map(filename, &archive->zip.size);

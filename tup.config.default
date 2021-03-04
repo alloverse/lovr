@@ -33,10 +33,9 @@ CONFIG_GRAPHICS=y
 CONFIG_HEADSET=y
 CONFIG_MATH=y
 CONFIG_PHYSICS=y
+CONFIG_SYSTEM=y
 CONFIG_THREAD=y
 CONFIG_TIMER=y
-CONFIG_JSON=y
-CONFIG_ENET=y
 
 ## Headset backends
 # Enabling headset backends adds support for more types of VR SDKs and hardware.
@@ -50,6 +49,12 @@ CONFIG_PICO=n
 CONFIG_WEBXR=n
 CONFIG_OCULUS_PATH=
 
+## Spatializer backends
+CONFIG_STEAM_AUDIO=n
+CONFIG_STEAM_AUDIO_PATH=
+CONFIG_OCULUS_AUDIO=n
+CONFIG_OCULUS_AUDIO_PATH=
+
 ## LuaJIT
 CONFIG_LUAJIT=y
 
@@ -58,17 +63,17 @@ CONFIG_LUAJIT=y
 # ANDROID_NDK: The path to the Android NDK
 # ANDROID_VERSION: The Android version to build against (usually 21 or 26)
 # ANDROID_BUILD_TOOLS_VERSION: The version of the Android build tools to use (in build-tools folder)
-# ANDROID_HOST_TAG: The host machine tag (e.g. windows-x86_64, darwin-x86_64)
 # ANDROID_KEYSTORE: The path to the keystore (use keytool to generate)
 # ANDROID_KEYSTORE_PASS: The keystore password (use either pass:<string>, env:<var>, or file:<path>)
 # ANDROID_MANIFEST: Optional path to a custom Android manifest file (xml)
+# ANDROID_PACKAGE: Optional package id override (default is org.lovr.app, taken from manifest)
 # ANDROID_ASSETS: Optional path to a folder to embed as the assets folder of the apk
 CONFIG_ANDROID_SDK=
 CONFIG_ANDROID_NDK=
 CONFIG_ANDROID_VERSION=
 CONFIG_ANDROID_BUILD_TOOLS_VERSION=
-CONFIG_ANDROID_HOST_TAG=
 CONFIG_ANDROID_KEYSTORE=
 CONFIG_ANDROID_KEYSTORE_PASS=
 CONFIG_ANDROID_MANIFEST=
+CONFIG_ANDROID_PACKAGE=
 CONFIG_ANDROID_ASSETS=

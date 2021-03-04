@@ -15,10 +15,11 @@ typedef enum {
   EVENT_KEYPRESSED,
   EVENT_KEYRELEASED,
   EVENT_TEXTINPUT,
-  EVENT_CUSTOM,
-#ifdef LOVR_ENABLE_THREAD
+#ifndef LOVR_DISABLE_THREAD
   EVENT_THREAD_ERROR,
 #endif
+  EVENT_PERMISSION,
+  EVENT_CUSTOM
 } EventType;
 
 typedef enum {
@@ -80,6 +81,11 @@ typedef struct {
   uint32_t count;
 } CustomEvent;
 
+typedef struct {
+  uint32_t permission;
+  bool granted;
+} PermissionEvent;
+
 typedef union {
   QuitEvent quit;
   BoolEvent boolean;
@@ -88,6 +94,7 @@ typedef union {
   TextEvent text;
   ThreadEvent thread;
   CustomEvent custom;
+  PermissionEvent permission;
 } EventData;
 
 typedef struct {

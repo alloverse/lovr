@@ -1,7 +1,5 @@
 #include "thread/channel.h"
 #include "event/event.h"
-#include "core/arr.h"
-#include "core/ref.h"
 #include "core/util.h"
 #include "lib/tinycthread/tinycthread.h"
 #include <stdlib.h>
@@ -9,6 +7,7 @@
 #include <math.h>
 
 struct Channel {
+  uint32_t ref;
   mtx_t lock;
   cnd_t cond;
   arr_t(Variant) messages;
@@ -19,8 +18,10 @@ struct Channel {
 };
 
 Channel* lovrChannelCreate(uint64_t hash) {
-  Channel* channel = lovrAlloc(Channel);
-  arr_init(&channel->messages);
+  Channel* channel = calloc(1, sizeof(Channel));
+  lovrAssert(channel, "Out of memory");
+  channel->ref = 1;
+  arr_init(&channel->messages, realloc);
   mtx_init(&channel->lock, mtx_plain | mtx_timed);
   cnd_init(&channel->cond);
   channel->hash = hash;
@@ -33,6 +34,7 @@ void lovrChannelDestroy(void* ref) {
   arr_free(&channel->messages);
   mtx_destroy(&channel->lock);
   cnd_destroy(&channel->cond);
+  free(channel);
 }
 
 bool lovrChannelPush(Channel* channel, Variant* variant, double timeout, uint64_t* id) {
@@ -80,7 +82,7 @@ bool lovrChannelPop(Channel* channel, Variant* variant, double timeout) {
       *variant = channel->messages.data[channel->head++];
       if (channel->head == channel->messages.length) {
         channel->head = channel->messages.length = 0;
-        lovrRelease(Channel, channel);
+        lovrRelease(channel, lovrChannelDestroy);
       }
       channel->received++;
       cnd_broadcast(&channel->cond);

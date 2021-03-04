@@ -1,11 +1,23 @@
 #include <lua.h>
 #include <lauxlib.h>
-#include <lualib.h>
+#include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
-#include "core/util.h"
 
 #pragma once
+
+struct Color;
+
+#ifdef _WIN32
+ #if defined(LOVR_BUILDING_SHARED)
+  #define LOVR_EXPORT __declspec(dllexport)
+ #elif defined(LOVR_BUILDING_EXE)
+  #define LOVR_EXPORT
+ #else
+  #define LOVR_EXPORT __declspec(dllimport)
+ #endif
+#else
+#define LOVR_EXPORT __attribute__((visibility("default")))
+#endif
 
 // Modules
 LOVR_EXPORT int luaopen_lovr(lua_State* L);
@@ -17,12 +29,12 @@ LOVR_EXPORT int luaopen_lovr_graphics(lua_State* L);
 LOVR_EXPORT int luaopen_lovr_headset(lua_State* L);
 LOVR_EXPORT int luaopen_lovr_math(lua_State* L);
 LOVR_EXPORT int luaopen_lovr_physics(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_system(lua_State* L);
 LOVR_EXPORT int luaopen_lovr_thread(lua_State* L);
 LOVR_EXPORT int luaopen_lovr_timer(lua_State* L);
 LOVR_EXPORT extern const luaL_Reg lovrModules[];
 
 // Objects
-extern const luaL_Reg lovrAudioStream[];
 extern const luaL_Reg lovrBallJoint[];
 extern const luaL_Reg lovrBlob[];
 extern const luaL_Reg lovrBoxShape[];
@@ -35,6 +47,7 @@ extern const luaL_Reg lovrCylinderShape[];
 extern const luaL_Reg lovrDistanceJoint[];
 extern const luaL_Reg lovrFont[];
 extern const luaL_Reg lovrHingeJoint[];
+extern const luaL_Reg lovrImage[];
 extern const luaL_Reg lovrMat4[];
 extern const luaL_Reg lovrMaterial[];
 extern const luaL_Reg lovrMesh[];
@@ -47,12 +60,11 @@ extern const luaL_Reg lovrRasterizer[];
 extern const luaL_Reg lovrShader[];
 extern const luaL_Reg lovrShaderBlock[];
 extern const luaL_Reg lovrSliderJoint[];
-extern const luaL_Reg lovrSoundData[];
+extern const luaL_Reg lovrSound[];
 extern const luaL_Reg lovrSource[];
 extern const luaL_Reg lovrSphereShape[];
 extern const luaL_Reg lovrMeshShape[];
 extern const luaL_Reg lovrTexture[];
-extern const luaL_Reg lovrTextureData[];
 extern const luaL_Reg lovrThread[];
 extern const luaL_Reg lovrVec2[];
 extern const luaL_Reg lovrVec4[];
@@ -69,29 +81,37 @@ typedef struct {
 
 extern StringEntry lovrArcMode[];
 extern StringEntry lovrAttributeType[];
+extern StringEntry lovrAudioMaterial[];
+extern StringEntry lovrAudioShareMode[];
+extern StringEntry lovrAudioType[];
 extern StringEntry lovrBlendAlphaMode[];
 extern StringEntry lovrBlendMode[];
 extern StringEntry lovrBlockType[];
 extern StringEntry lovrBufferUsage[];
+extern StringEntry lovrChannelLayout[];
 extern StringEntry lovrCompareMode[];
 extern StringEntry lovrCoordinateSpace[];
 extern StringEntry lovrDevice[];
-extern StringEntry lovrDeviceAxe[];
+extern StringEntry lovrDeviceAxis[];
 extern StringEntry lovrDeviceButton[];
 extern StringEntry lovrDrawMode[];
 extern StringEntry lovrDrawStyle[];
+extern StringEntry lovrEffect[];
 extern StringEntry lovrEventType[];
 extern StringEntry lovrFilterMode[];
 extern StringEntry lovrHeadsetDriver[];
 extern StringEntry lovrHeadsetOrigin[];
 extern StringEntry lovrHorizontalAlign[];
 extern StringEntry lovrJointType[];
+extern StringEntry lovrKeyboardKey[];
 extern StringEntry lovrMaterialColor[];
 extern StringEntry lovrMaterialScalar[];
 extern StringEntry lovrMaterialTexture[];
+extern StringEntry lovrPermission[];
+extern StringEntry lovrSampleFormat[];
 extern StringEntry lovrShaderType[];
 extern StringEntry lovrShapeType[];
-extern StringEntry lovrSourceType[];
+extern StringEntry lovrSourceInterpolation[];
 extern StringEntry lovrStencilAction[];
 extern StringEntry lovrTextureFormat[];
 extern StringEntry lovrTextureType[];
@@ -102,6 +122,11 @@ extern StringEntry lovrWinding[];
 extern StringEntry lovrWrapMode[];
 
 // General helpers
+
+typedef struct {
+  const char* name;
+  void (*destructor)(void*);
+} TypeInfo;
 
 typedef struct {
   uint64_t hash;
@@ -118,9 +143,9 @@ typedef struct {
 #endif
 
 #define luax_registertype(L, T) _luax_registertype(L, #T, lovr ## T, lovr ## T ## Destroy)
-#define luax_totype(L, i, T) (T*) _luax_totype(L, i, hash64(#T, strlen(#T)))
-#define luax_checktype(L, i, T) (T*) _luax_checktype(L, i, hash64(#T, strlen(#T)), #T)
-#define luax_pushtype(L, T, o) _luax_pushtype(L, #T, hash64(#T, strlen(#T)), o)
+#define luax_totype(L, i, T) (T*) _luax_totype(L, i, hash64(#T, sizeof(#T) - 1))
+#define luax_checktype(L, i, T) (T*) _luax_checktype(L, i, hash64(#T, sizeof(#T) - 1), #T)
+#define luax_pushtype(L, T, o) _luax_pushtype(L, #T, hash64(#T, sizeof(#T) - 1), o)
 #define luax_checkenum(L, i, T, x) _luax_checkenum(L, i, lovr ## T, x, #T)
 #define luax_pushenum(L, T, x) lua_pushlstring(L, (lovr ## T)[x].string, (lovr ## T)[x].length)
 #define luax_checkfloat(L, i) (float) luaL_checknumber(L, i)
@@ -146,25 +171,26 @@ int luax_setconf(lua_State* L);
 void luax_setmainthread(lua_State* L);
 void luax_atexit(lua_State* L, void (*destructor)(void));
 void luax_readcolor(lua_State* L, int index, struct Color* color);
+int luax_readtriangles(lua_State* L, int index, float** vertices, uint32_t* vertexCount, uint32_t** indices, uint32_t* indexCount, bool* shouldFree);
 
 // Module helpers
 
-#ifdef LOVR_ENABLE_DATA
+#ifndef LOVR_DISABLE_DATA
 struct Blob;
 struct Blob* luax_readblob(lua_State* L, int index, const char* debug);
 #endif
 
-#ifdef LOVR_ENABLE_EVENT
+#ifndef LOVR_DISABLE_EVENT
 struct Variant;
 void luax_checkvariant(lua_State* L, int index, struct Variant* variant);
 int luax_pushvariant(lua_State* L, struct Variant* variant);
 #endif
 
-#ifdef LOVR_ENABLE_FILESYSTEM
+#ifndef LOVR_DISABLE_FILESYSTEM
 void* luax_readfile(const char* filename, size_t* bytesRead);
 #endif
 
-#ifdef LOVR_ENABLE_GRAPHICS
+#ifndef LOVR_DISABLE_GRAPHICS
 struct Attachment;
 struct Texture;
 struct Uniform;
@@ -173,7 +199,7 @@ int luax_optmipmap(lua_State* L, int index, struct Texture* texture);
 void luax_readattachments(lua_State* L, int index, struct Attachment* attachments, int* count);
 #endif
 
-#ifdef LOVR_ENABLE_MATH
+#ifndef LOVR_DISABLE_MATH
 #include "math/pool.h" // TODO
 float* luax_tovector(lua_State* L, int index, VectorType* type);
 float* luax_checkvector(lua_State* L, int index, VectorType type, const char* expected);
@@ -185,7 +211,7 @@ int luax_readmat4(lua_State* L, int index, float* m, int scaleComponents);
 uint64_t luax_checkrandomseed(lua_State* L, int index);
 #endif
 
-#ifdef LOVR_ENABLE_PHYSICS
+#ifndef LOVR_DISABLE_PHYSICS
 struct Joint;
 struct Shape;
 void luax_pushjoint(lua_State* L, struct Joint* joint);

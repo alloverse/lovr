@@ -14,6 +14,7 @@
 struct Channel;
 
 typedef struct Thread {
+  uint32_t ref;
   thrd_t handle;
   mtx_t lock;
   Blob* body;
@@ -29,8 +30,7 @@ void lovrThreadModuleDestroy(void);
 struct Channel* lovrThreadGetChannel(const char* name);
 void lovrThreadRemoveChannel(uint64_t hash);
 
-Thread* lovrThreadInit(Thread* thread, int (*runner)(void*), Blob* body);
-#define lovrThreadCreate(...) lovrThreadInit(lovrAlloc(Thread), __VA_ARGS__)
+Thread* lovrThreadCreate(int (*runner)(void*), Blob* body);
 void lovrThreadDestroy(void* ref);
 void lovrThreadStart(Thread* thread, Variant* arguments, uint32_t argumentCount);
 void lovrThreadWait(Thread* thread);

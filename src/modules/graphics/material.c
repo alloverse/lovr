@@ -3,11 +3,23 @@
 #include "graphics/shader.h"
 #include "graphics/texture.h"
 #include "resources/shaders.h"
-#include "core/ref.h"
+#include "core/util.h"
 #include <stdlib.h>
 #include <math.h>
 
-Material* lovrMaterialInit(Material* material) {
+struct Material {
+  uint32_t ref;
+  float scalars[MAX_MATERIAL_SCALARS];
+  Color colors[MAX_MATERIAL_COLORS];
+  struct Texture* textures[MAX_MATERIAL_TEXTURES];
+  float transform[9];
+};
+
+Material* lovrMaterialCreate() {
+  Material* material = calloc(1, sizeof(Material));
+  lovrAssert(material, "Out of memory");
+  material->ref = 1;
+
   for (int i = 0; i < MAX_MATERIAL_SCALARS; i++) {
     material->scalars[i] = 1.f;
   }
@@ -28,8 +40,9 @@ void lovrMaterialDestroy(void* ref) {
   Material* material = ref;
   lovrGraphicsFlushMaterial(material);
   for (int i = 0; i < MAX_MATERIAL_TEXTURES; i++) {
-    lovrRelease(Texture, material->textures[i]);
+    lovrRelease(material->textures[i], lovrTextureDestroy);
   }
+  free(material);
 }
 
 void lovrMaterialBind(Material* material, Shader* shader) {
@@ -78,7 +91,7 @@ void lovrMaterialSetTexture(Material* material, MaterialTexture textureType, Tex
   if (material->textures[textureType] != texture) {
     lovrGraphicsFlushMaterial(material);
     lovrRetain(texture);
-    lovrRelease(Texture, material->textures[textureType]);
+    lovrRelease(material->textures[textureType], lovrTextureDestroy);
     material->textures[textureType] = texture;
   }
 }

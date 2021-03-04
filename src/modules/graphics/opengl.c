@@ -6,9 +6,9 @@
 #include "graphics/shader.h"
 #include "graphics/texture.h"
 #include "resources/shaders.h"
+#include "data/blob.h"
 #include "data/modelData.h"
 #include "math/math.h"
-#include "core/ref.h"
 #include <math.h>
 #include <limits.h>
 #include <string.h>
@@ -40,6 +40,7 @@
 #define LOVR_SHADER_DRAW_ID 7
 
 struct Buffer {
+  uint32_t ref;
   uint32_t id;
   void* data;
   size_t size;
@@ -53,6 +54,7 @@ struct Buffer {
 };
 
 struct Texture {
+  uint32_t ref;
   GLuint id;
   GLuint msaaId;
   GLenum target;
@@ -74,6 +76,7 @@ struct Texture {
 };
 
 struct Canvas {
+  uint32_t ref;
   uint32_t framebuffer;
   uint32_t resolveBuffer;
   uint32_t depthBuffer;
@@ -89,6 +92,7 @@ struct Canvas {
 };
 
 struct ShaderBlock {
+  uint32_t ref;
   BlockType type;
   arr_uniform_t uniforms;
   map_t uniformMap;
@@ -96,6 +100,7 @@ struct ShaderBlock {
 };
 
 struct Shader {
+  uint32_t ref;
   uint32_t program;
   ShaderType type;
   arr_uniform_t uniforms;
@@ -107,6 +112,7 @@ struct Shader {
 };
 
 struct Mesh {
+  uint32_t ref;
   uint32_t vao;
   uint32_t ibo;
   DrawMode mode;
@@ -183,7 +189,7 @@ static struct {
   BlockBuffer blockBuffers[2][MAX_BLOCK_BUFFERS];
   int activeTexture;
   Texture* textures[MAX_TEXTURES];
-  Image images[MAX_IMAGES];
+  StorageImage images[MAX_IMAGES];
   float viewports[2][4];
   uint32_t viewportCount;
   arr_t(void*) incoherents[MAX_BARRIERS];
@@ -749,7 +755,7 @@ static void lovrGpuBindTexture(Texture* texture, int slot) {
 
   if (texture != state.textures[slot]) {
     lovrRetain(texture);
-    lovrRelease(Texture, state.textures[slot]);
+    lovrRelease(state.textures[slot], lovrTextureDestroy);
     state.textures[slot] = texture;
     if (state.activeTexture != slot) {
       glActiveTexture(GL_TEXTURE0 + slot);
@@ -760,11 +766,11 @@ static void lovrGpuBindTexture(Texture* texture, int slot) {
 }
 
 #ifndef LOVR_WEBGL
-static void lovrGpuBindImage(Image* image, int slot, const char* name) {
+static void lovrGpuBindImage(StorageImage* image, int slot, const char* name) {
   lovrAssert(slot >= 0 && slot < MAX_IMAGES, "Invalid image slot %d", slot);
 
   // This is a risky way to compare the two structs
-  if (memcmp(state.images + slot, image, sizeof(Image))) {
+  if (memcmp(state.images + slot, image, sizeof(StorageImage))) {
     Texture* texture = image->texture;
     lovrAssert(texture, "No Texture bound to image uniform '%s'", name);
     lovrAssert(texture->format != FORMAT_RGBA || !texture->srgb, "Attempt to bind sRGB texture to image uniform '%s'", name);
@@ -778,9 +784,9 @@ static void lovrGpuBindImage(Image* image, int slot, const char* name) {
     int slice = layered ? 0 : image->slice;
 
     lovrRetain(texture);
-    lovrRelease(Texture, state.images[slot].texture);
+    lovrRelease(state.images[slot].texture, lovrTextureDestroy);
     glBindImageTexture(slot, texture->id, image->mipmap, layered, slice, glAccess, glFormat);
-    memcpy(state.images + slot, image, sizeof(Image));
+    memcpy(state.images + slot, image, sizeof(StorageImage));
   }
 }
 #endif
@@ -1161,7 +1167,7 @@ static void lovrGpuBindShader(Shader* shader) {
       case UNIFORM_IMAGE:
 #ifndef LOVR_WEBGL
         for (int j = 0; j < count; j++) {
-          Image* image = &uniform->value.images[j];
+          StorageImage* image = &uniform->value.images[j];
           Texture* texture = image->texture;
           lovrAssert(!texture || texture->type == uniform->textureType, "Uniform texture type mismatch for uniform '%s'", uniform->name);
 
@@ -1226,6 +1232,7 @@ static void lovrGpuSetViewports(float* viewport, uint32_t count) {
 
 // GPU
 
+#ifndef LOVR_WEBGL
 static void GLAPIENTRY onMessage(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userdata) {
   int level;
   switch (severity) {
@@ -1236,8 +1243,9 @@ static void GLAPIENTRY onMessage(GLenum source, GLenum type, GLuint id, GLenum s
   }
   lovrLog(level, "GL", message);
 }
+#endif
 
-void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
+void lovrGpuInit(void (*getProcAddress(const char*))(void), bool debug) {
 #ifdef LOVR_GL
   gladLoadGLLoader((GLADloadproc) getProcAddress);
 #elif defined(LOVR_GLES)
@@ -1250,7 +1258,7 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
     glDebugMessageCallback(onMessage, NULL);
   }
   state.features.astc = GLAD_GL_ES_VERSION_3_2;
-  state.features.compute = GLAD_GL_ES_VERSION_3_1 || GLAD_GL_ARB_compute_shader;
+  state.features.compute = GLAD_GL_ES_VERSION_3_1 || (GLAD_GL_ARB_compute_shader && GLAD_GL_ARB_shader_storage_buffer_object && GLAD_GL_ARB_shader_image_load_store);
   state.features.dxt = GLAD_GL_EXT_texture_compression_s3tc;
   state.features.instancedStereo = GLAD_GL_ARB_viewport_array && GLAD_GL_AMD_vertex_shader_viewport_index && GLAD_GL_ARB_fragment_layer_viewport;
   state.features.multiview = GLAD_GL_ES_VERSION_3_0 && GLAD_GL_OVR_multiview2 && GLAD_GL_OVR_multiview_multisampled_render_to_texture;
@@ -1339,14 +1347,14 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
 #endif
 
   for (int i = 0; i < MAX_BARRIERS; i++) {
-    arr_init(&state.incoherents[i]);
+    arr_init(&state.incoherents[i], realloc);
   }
 
-  TextureData* textureData = lovrTextureDataCreate(1, 1, NULL, 0xff, FORMAT_RGBA);
-  state.defaultTexture = lovrTextureCreate(TEXTURE_2D, &textureData, 1, true, false, 0);
+  Image* image = lovrImageCreate(1, 1, NULL, 0xff, FORMAT_RGBA);
+  state.defaultTexture = lovrTextureCreate(TEXTURE_2D, &image, 1, true, false, 0);
   lovrTextureSetFilter(state.defaultTexture, (TextureFilter) { .mode = FILTER_NEAREST });
   lovrTextureSetWrap(state.defaultTexture, (TextureWrap) { WRAP_CLAMP, WRAP_CLAMP, WRAP_CLAMP });
-  lovrRelease(TextureData, textureData);
+  lovrRelease(image, lovrImageDestroy);
 
   map_init(&state.timerMap, 4);
   state.queryPool.next = ~0u;
@@ -1354,12 +1362,12 @@ void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug) {
 }
 
 void lovrGpuDestroy() {
-  lovrRelease(Texture, state.defaultTexture);
+  lovrRelease(state.defaultTexture, lovrTextureDestroy);
   for (int i = 0; i < MAX_TEXTURES; i++) {
-    lovrRelease(Texture, state.textures[i]);
+    lovrRelease(state.textures[i], lovrTextureDestroy);
   }
   for (int i = 0; i < MAX_IMAGES; i++) {
-    lovrRelease(Texture, state.images[i].texture);
+    lovrRelease(state.images[i].texture, lovrTextureDestroy);
   }
   for (int i = 0; i < MAX_BARRIERS; i++) {
     arr_free(&state.incoherents[i]);
@@ -1515,7 +1523,7 @@ void lovrGpuStencil(StencilAction action, int replaceValue, StencilCallback call
 }
 
 void lovrGpuDirtyTexture() {
-  lovrRelease(Texture, state.textures[state.activeTexture]);
+  lovrRelease(state.textures[state.activeTexture], lovrTextureDestroy);
   state.textures[state.activeTexture] = NULL;
 }
 
@@ -1664,14 +1672,16 @@ const GpuStats* lovrGpuGetStats() {
 
 // Texture
 
-Texture* lovrTextureCreate(TextureType type, TextureData** slices, uint32_t sliceCount, bool srgb, bool mipmaps, uint32_t msaa) {
-  Texture* texture = lovrAlloc(Texture);
-  state.stats.textureCount++;
+Texture* lovrTextureCreate(TextureType type, Image** slices, uint32_t sliceCount, bool srgb, bool mipmaps, uint32_t msaa) {
+  Texture* texture = calloc(1, sizeof(Texture));
+  lovrAssert(texture, "Out of memory");
+  texture->ref = 1;
   texture->type = type;
   texture->srgb = srgb;
   texture->mipmaps = mipmaps;
   texture->target = convertTextureTarget(type);
   texture->compareMode = COMPARE_NONE;
+  state.stats.textureCount++;
 
   WrapMode wrap = type == TEXTURE_CUBE ? WRAP_CLAMP : WRAP_REPEAT;
   glGenTextures(1, &texture->id);
@@ -1694,13 +1704,15 @@ Texture* lovrTextureCreate(TextureType type, TextureData** slices, uint32_t slic
 }
 
 Texture* lovrTextureCreateFromHandle(uint32_t handle, TextureType type, uint32_t depth, uint32_t msaa) {
-  Texture* texture = lovrAlloc(Texture);
-  state.stats.textureCount++;
+  Texture* texture = calloc(1, sizeof(Texture));
+  lovrAssert(texture, "Out of memory");
+  texture->ref = 1;
   texture->type = type;
   texture->id = handle;
   texture->target = convertTextureTarget(type);
   texture->compareMode = COMPARE_NONE;
   texture->native = true;
+  state.stats.textureCount++;
 
   int width, height;
   lovrGpuBindTexture(texture, 0);
@@ -1730,13 +1742,14 @@ void lovrTextureDestroy(void* ref) {
   lovrGpuDestroySyncResource(texture, texture->incoherent);
   state.stats.textureMemory -= getTextureMemorySize(texture);
   state.stats.textureCount--;
+  free(texture);
 }
 
 void lovrTextureAllocate(Texture* texture, uint32_t width, uint32_t height, uint32_t depth, TextureFormat format) {
   uint32_t maxSize = (uint32_t) state.limits.textureSize;
   lovrAssert(!texture->allocated, "Texture is already allocated");
   lovrAssert(texture->type != TEXTURE_CUBE || width == height, "Cubemap images must be square");
-  lovrAssert(texture->type != TEXTURE_CUBE || depth == 6, "6 images are required for a cube texture\n");
+  lovrAssert(texture->type != TEXTURE_CUBE || depth == 6, "6 images are required for a cube texture");
   lovrAssert(texture->type != TEXTURE_2D || depth == 1, "2D textures can only contain a single image");
   lovrAssert(width < maxSize, "Texture width %d exceeds max of %d", width, maxSize);
   lovrAssert(height < maxSize, "Texture height %d exceeds max of %d", height, maxSize);
@@ -1803,7 +1816,7 @@ void lovrTextureAllocate(Texture* texture, uint32_t width, uint32_t height, uint
   state.stats.textureMemory += getTextureMemorySize(texture);
 }
 
-void lovrTextureReplacePixels(Texture* texture, TextureData* textureData, uint32_t x, uint32_t y, uint32_t slice, uint32_t mipmap) {
+void lovrTextureReplacePixels(Texture* texture, Image* image, uint32_t x, uint32_t y, uint32_t slice, uint32_t mipmap) {
   lovrGraphicsFlush();
   lovrAssert(texture->allocated, "Texture is not allocated");
 
@@ -1815,21 +1828,21 @@ void lovrTextureReplacePixels(Texture* texture, TextureData* textureData, uint32
 
   uint32_t maxWidth = lovrTextureGetWidth(texture, mipmap);
   uint32_t maxHeight = lovrTextureGetHeight(texture, mipmap);
-  uint32_t width = textureData->width;
-  uint32_t height = textureData->height;
+  uint32_t width = image->width;
+  uint32_t height = image->height;
   bool overflow = (x + width > maxWidth) || (y + height > maxHeight);
   lovrAssert(!overflow, "Trying to replace pixels outside the texture's bounds");
   lovrAssert(mipmap < texture->mipmapCount, "Invalid mipmap level %d", mipmap);
-  GLenum glFormat = convertTextureFormat(textureData->format);
-  GLenum glInternalFormat = convertTextureFormatInternal(textureData->format, texture->srgb);
+  GLenum glFormat = convertTextureFormat(image->format);
+  GLenum glInternalFormat = convertTextureFormatInternal(image->format, texture->srgb);
   GLenum binding = (texture->type == TEXTURE_CUBE) ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + slice : texture->target;
 
   lovrGpuBindTexture(texture, 0);
-  if (isTextureFormatCompressed(textureData->format)) {
+  if (isTextureFormatCompressed(image->format)) {
     lovrAssert(width == maxWidth && height == maxHeight, "Compressed texture pixels must be fully replaced");
     lovrAssert(mipmap == 0, "Unable to replace a specific mipmap of a compressed texture");
-    for (uint32_t i = 0; i < textureData->mipmapCount; i++) {
-      Mipmap* m = textureData->mipmaps + i;
+    for (uint32_t i = 0; i < image->mipmapCount; i++) {
+      Mipmap* m = image->mipmaps + i;
       switch (texture->type) {
         case TEXTURE_2D:
         case TEXTURE_CUBE:
@@ -1842,17 +1855,17 @@ void lovrTextureReplacePixels(Texture* texture, TextureData* textureData, uint32
       }
     }
   } else {
-    lovrAssert(textureData->blob->data, "Trying to replace Texture pixels with empty pixel data");
-    GLenum glType = convertTextureFormatType(textureData->format);
+    lovrAssert(image->blob->data, "Trying to replace Texture pixels with empty pixel data");
+    GLenum glType = convertTextureFormatType(image->format);
 
     switch (texture->type) {
       case TEXTURE_2D:
       case TEXTURE_CUBE:
-        glTexSubImage2D(binding, mipmap, x, y, width, height, glFormat, glType, textureData->blob->data);
+        glTexSubImage2D(binding, mipmap, x, y, width, height, glFormat, glType, image->blob->data);
         break;
       case TEXTURE_ARRAY:
       case TEXTURE_VOLUME:
-        glTexSubImage3D(binding, mipmap, x, y, slice, width, height, 1, glFormat, glType, textureData->blob->data);
+        glTexSubImage3D(binding, mipmap, x, y, slice, width, height, 1, glFormat, glType, image->blob->data);
         break;
     }
 
@@ -1978,7 +1991,10 @@ void lovrTextureSetWrap(Texture* texture, TextureWrap wrap) {
 // Canvas
 
 Canvas* lovrCanvasCreate(uint32_t width, uint32_t height, CanvasFlags flags) {
-  Canvas* canvas = lovrAlloc(Canvas);
+  Canvas* canvas = calloc(1, sizeof(Canvas));
+  lovrAssert(canvas, "Out of memory");
+  canvas->ref = 1;
+
   if (flags.stereo && state.singlepass != MULTIVIEW) {
     width *= 2;
   }
@@ -2023,7 +2039,9 @@ Canvas* lovrCanvasCreate(uint32_t width, uint32_t height, CanvasFlags flags) {
 }
 
 Canvas* lovrCanvasCreateFromHandle(uint32_t width, uint32_t height, CanvasFlags flags, uint32_t framebuffer, uint32_t depthBuffer, uint32_t resolveBuffer, uint32_t attachmentCount, bool immortal) {
-  Canvas* canvas = lovrAlloc(Canvas);
+  Canvas* canvas = calloc(1, sizeof(Canvas));
+  lovrAssert(canvas, "Out of memory");
+  canvas->ref = 1;
   canvas->framebuffer = framebuffer;
   canvas->depthBuffer = depthBuffer;
   canvas->resolveBuffer = resolveBuffer;
@@ -2044,9 +2062,10 @@ void lovrCanvasDestroy(void* ref) {
     glDeleteFramebuffers(1, &canvas->resolveBuffer);
   }
   for (uint32_t i = 0; i < canvas->attachmentCount; i++) {
-    lovrRelease(Texture, canvas->attachments[i].texture);
+    lovrRelease(canvas->attachments[i].texture, lovrTextureDestroy);
   }
-  lovrRelease(Texture, canvas->depth.texture);
+  lovrRelease(canvas->depth.texture, lovrTextureDestroy);
+  free(canvas);
 }
 
 void lovrCanvasResolve(Canvas* canvas) {
@@ -2093,7 +2112,7 @@ void lovrCanvasResolve(Canvas* canvas) {
   canvas->needsResolve = false;
 }
 
-TextureData* lovrCanvasNewTextureData(Canvas* canvas, uint32_t index) {
+Image* lovrCanvasNewImage(Canvas* canvas, uint32_t index) {
   lovrGraphicsFlushCanvas(canvas);
   lovrGpuBindCanvas(canvas, false);
 
@@ -2112,14 +2131,14 @@ TextureData* lovrCanvasNewTextureData(Canvas* canvas, uint32_t index) {
     glReadBuffer(index);
   }
 
-  TextureData* textureData = lovrTextureDataCreate(canvas->width, canvas->height, NULL, 0x0, FORMAT_RGBA);
-  glReadPixels(0, 0, canvas->width, canvas->height, GL_RGBA, GL_UNSIGNED_BYTE, textureData->blob->data);
+  Image* image = lovrImageCreate(canvas->width, canvas->height, NULL, 0x0, FORMAT_RGBA);
+  glReadPixels(0, 0, canvas->width, canvas->height, GL_RGBA, GL_UNSIGNED_BYTE, image->blob->data);
 
   if (index != 0) {
     glReadBuffer(0);
   }
 
-  return textureData;
+  return image;
 }
 
 const Attachment* lovrCanvasGetAttachments(Canvas* canvas, uint32_t* count) {
@@ -2129,7 +2148,7 @@ const Attachment* lovrCanvasGetAttachments(Canvas* canvas, uint32_t* count) {
 
 void lovrCanvasSetAttachments(Canvas* canvas, Attachment* attachments, uint32_t count) {
   lovrAssert(count > 0, "A Canvas must have at least one attached Texture");
-  lovrAssert(count <= MAX_CANVAS_ATTACHMENTS, "Only %d textures can be attached to a Canvas, got %d\n", MAX_CANVAS_ATTACHMENTS, count);
+  lovrAssert(count <= MAX_CANVAS_ATTACHMENTS, "Only %d textures can be attached to a Canvas, got %d", MAX_CANVAS_ATTACHMENTS, count);
 
   if (!canvas->needsAttach && count == canvas->attachmentCount && !memcmp(canvas->attachments, attachments, count * sizeof(Attachment))) {
     return;
@@ -2157,7 +2176,7 @@ void lovrCanvasSetAttachments(Canvas* canvas, Attachment* attachments, uint32_t 
   }
 
   for (uint32_t i = 0; i < canvas->attachmentCount; i++) {
-    lovrRelease(Texture, canvas->attachments[i].texture);
+    lovrRelease(canvas->attachments[i].texture, lovrTextureDestroy);
   }
 
   memcpy(canvas->attachments, attachments, count * sizeof(Attachment));
@@ -2200,7 +2219,10 @@ Texture* lovrCanvasGetDepthTexture(Canvas* canvas) {
 // Buffer
 
 Buffer* lovrBufferCreate(size_t size, void* data, BufferType type, BufferUsage usage, bool readable) {
-  Buffer* buffer = lovrAlloc(Buffer);
+  Buffer* buffer = calloc(1, sizeof(Buffer));
+  lovrAssert(buffer, "Out of memory");
+  buffer->ref = 1;
+
   state.stats.bufferCount++;
   state.stats.bufferMemory += size;
   buffer->size = size;
@@ -2235,6 +2257,7 @@ void lovrBufferDestroy(void* ref) {
 #endif
   state.stats.bufferMemory -= buffer->size;
   state.stats.bufferCount--;
+  free(buffer);
 }
 
 size_t lovrBufferGetSize(Buffer* buffer) {
@@ -2364,7 +2387,7 @@ static void lovrShaderSetupUniforms(Shader* shader) {
   lovrAssert((size_t) blockCount <= MAX_BLOCK_BUFFERS, "Shader has too many uniform blocks (%d) the max is %d", blockCount, MAX_BLOCK_BUFFERS);
   map_init(&shader->blockMap, blockCount);
   arr_block_t* uniformBlocks = &shader->blocks[BLOCK_UNIFORM];
-  arr_init(uniformBlocks);
+  arr_init(uniformBlocks, realloc);
   arr_reserve(uniformBlocks, (size_t) blockCount);
   for (int i = 0; i < blockCount; i++) {
     UniformBlock block = { .slot = i, .source = NULL };
@@ -2376,12 +2399,12 @@ static void lovrShaderSetupUniforms(Shader* shader) {
     int blockId = (i << 1) + BLOCK_UNIFORM;
     map_set(&shader->blockMap, hash64(name, length), blockId);
     arr_push(uniformBlocks, block);
-    arr_init(&uniformBlocks->data[uniformBlocks->length - 1].uniforms);
+    arr_init(&uniformBlocks->data[uniformBlocks->length - 1].uniforms, realloc);
   }
 
   // Shader storage buffers and their buffer variables
   arr_block_t* computeBlocks = &shader->blocks[BLOCK_COMPUTE];
-  arr_init(computeBlocks);
+  arr_init(computeBlocks, realloc);
 #ifndef LOVR_WEBGL
   if ((GLAD_GL_ARB_shader_storage_buffer_object && GLAD_GL_ARB_program_interface_query) || GLAD_GL_ES_VERSION_3_1) {
 
@@ -2397,7 +2420,7 @@ static void lovrShaderSetupUniforms(Shader* shader) {
 #else
       glShaderStorageBlockBinding(program, i, block.slot);
 #endif
-      arr_init(&block.uniforms);
+      arr_init(&block.uniforms, realloc);
 
       GLsizei length;
       char name[LOVR_MAX_UNIFORM_LENGTH];
@@ -2439,7 +2462,7 @@ static void lovrShaderSetupUniforms(Shader* shader) {
   int imageSlot = 0;
   glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &uniformCount);
   map_init(&shader->uniformMap, 0);
-  arr_init(&shader->uniforms);
+  arr_init(&shader->uniforms, realloc);
   for (uint32_t i = 0; i < (uint32_t) uniformCount; i++) {
     Uniform uniform;
     GLenum glType;
@@ -2515,7 +2538,7 @@ static void lovrShaderSetupUniforms(Shader* shader) {
 
       case UNIFORM_SAMPLER:
       case UNIFORM_IMAGE:
-        uniform.size = uniform.count * (uniform.type == UNIFORM_SAMPLER ? sizeof(Texture*) : sizeof(Image));
+        uniform.size = uniform.count * (uniform.type == UNIFORM_SAMPLER ? sizeof(Texture*) : sizeof(StorageImage));
         uniform.value.data = calloc(1, uniform.size);
         lovrAssert(uniform.value.data, "Out of memory");
 
@@ -2591,11 +2614,19 @@ static char* lovrShaderGetFlagCode(ShaderFlag* flags, uint32_t flagCount) {
 }
 
 Shader* lovrShaderCreateGraphics(const char* vertexSource, int vertexSourceLength, const char* fragmentSource, int fragmentSourceLength, ShaderFlag* flags, uint32_t flagCount, bool multiview) {
-  Shader* shader = lovrAlloc(Shader);
+  Shader* shader = calloc(1, sizeof(Shader));
+  lovrAssert(shader, "Out of memory");
+  shader->ref = 1;
+
 #if defined(LOVR_WEBGL) || defined(LOVR_GLES)
   const char* version = "#version 300 es\n";
+  const char* computeExtensions = "";
 #else
-  const char* version = state.features.compute ? "#version 430\n" : "#version 150\n";
+  const char* version = "#version 330\n";
+  const char* computeExtensions = state.features.compute ?
+    "#extension GL_ARB_shader_storage_buffer_object : enable\n"
+    "#extension GL_ARB_shader_image_load_store : enable\n" :
+    "";
 #endif
 
   const char* singlepass[2] = { "", "" };
@@ -2610,15 +2641,15 @@ Shader* lovrShaderCreateGraphics(const char* vertexSource, int vertexSourceLengt
 
   // Vertex
   vertexSource = vertexSource == NULL ? lovrUnlitVertexShader : vertexSource;
-  const char* vertexSources[] = { version, singlepass[0], flagSource ? flagSource : "", lovrShaderVertexPrefix, vertexSource, lovrShaderVertexSuffix };
-  int vertexSourceLengths[] = { -1, -1, -1, -1, vertexSourceLength, -1 };
+  const char* vertexSources[] = { version, computeExtensions, singlepass[0], flagSource ? flagSource : "", lovrShaderVertexPrefix, vertexSource, lovrShaderVertexSuffix };
+  int vertexSourceLengths[] = { -1, -1, -1, -1, -1, vertexSourceLength, -1 };
   int vertexSourceCount = sizeof(vertexSources) / sizeof(vertexSources[0]);
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSources, vertexSourceLengths, vertexSourceCount);
 
   // Fragment
   fragmentSource = fragmentSource == NULL ? lovrUnlitFragmentShader : fragmentSource;
-  const char* fragmentSources[] = { version, singlepass[1], flagSource ? flagSource : "", lovrShaderFragmentPrefix, fragmentSource, lovrShaderFragmentSuffix };
-  int fragmentSourceLengths[] = { -1, -1, -1, -1, fragmentSourceLength, -1 };
+  const char* fragmentSources[] = { version, computeExtensions, singlepass[1], flagSource ? flagSource : "", lovrShaderFragmentPrefix, fragmentSource, lovrShaderFragmentSuffix };
+  int fragmentSourceLengths[] = { -1, -1, -1, -1, -1, fragmentSourceLength, -1 };
   int fragmentSourceCount = sizeof(fragmentSources) / sizeof(fragmentSources[0]);
   GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSources, fragmentSourceLengths, fragmentSourceCount);
 
@@ -2687,7 +2718,9 @@ Shader* lovrShaderCreateDefault(DefaultShader type, ShaderFlag* flags, uint32_t 
 }
 
 Shader* lovrShaderCreateCompute(const char* source, int length, ShaderFlag* flags, uint32_t flagCount) {
-  Shader* shader = lovrAlloc(Shader);
+  Shader* shader = calloc(1, sizeof(Shader));
+  lovrAssert(shader, "Out of memory");
+  shader->ref = 1;
 #ifdef LOVR_WEBGL
   lovrThrow("Compute shaders are not supported on this system");
 #else
@@ -2719,7 +2752,7 @@ void lovrShaderDestroy(void* ref) {
   }
   for (BlockType type = BLOCK_UNIFORM; type <= BLOCK_COMPUTE; type++) {
     for (size_t i = 0; i < shader->blocks[type].length; i++) {
-      lovrRelease(Buffer, shader->blocks[type].data[i].source);
+      lovrRelease(shader->blocks[type].data[i].source, lovrBufferDestroy);
       arr_free(&shader->blocks[type].data[i].uniforms);
     }
   }
@@ -2729,6 +2762,7 @@ void lovrShaderDestroy(void* ref) {
   map_free(&shader->attributes);
   map_free(&shader->uniformMap);
   map_free(&shader->blockMap);
+  free(shader);
 }
 
 ShaderType lovrShaderGetType(Shader* shader) {
@@ -2788,8 +2822,8 @@ void lovrShaderSetTextures(Shader* shader, const char* name, Texture** data, int
   lovrShaderSetUniform(shader, name, UNIFORM_SAMPLER, data, start, count, sizeof(Texture*), "texture");
 }
 
-void lovrShaderSetImages(Shader* shader, const char* name, Image* data, int start, int count) {
-  lovrShaderSetUniform(shader, name, UNIFORM_IMAGE, data, start, count, sizeof(Image), "image");
+void lovrShaderSetImages(Shader* shader, const char* name, StorageImage* data, int start, int count) {
+  lovrShaderSetUniform(shader, name, UNIFORM_IMAGE, data, start, count, sizeof(StorageImage), "image");
 }
 
 void lovrShaderSetColor(Shader* shader, const char* name, Color color) {
@@ -2810,7 +2844,7 @@ void lovrShaderSetBlock(Shader* shader, const char* name, Buffer* buffer, size_t
   if (block->source != buffer || block->offset != offset || block->size != size) {
     lovrGraphicsFlushShader(shader);
     lovrRetain(buffer);
-    lovrRelease(Buffer, block->source);
+    lovrRelease(block->source, lovrBufferDestroy);
     block->access = access;
     block->source = buffer;
     block->offset = offset;
@@ -2840,8 +2874,11 @@ size_t lovrShaderComputeUniformLayout(arr_uniform_t* uniforms) {
 }
 
 ShaderBlock* lovrShaderBlockCreate(BlockType type, Buffer* buffer, arr_uniform_t* uniforms) {
-  ShaderBlock* block = lovrAlloc(ShaderBlock);
-  arr_init(&block->uniforms);
+  ShaderBlock* block = calloc(1, sizeof(ShaderBlock));
+  lovrAssert(block, "Out of memory");
+  block->ref = 1;
+
+  arr_init(&block->uniforms, realloc);
   map_init(&block->uniformMap, (uint32_t) uniforms->length);
 
   arr_append(&block->uniforms, uniforms->data, uniforms->length);
@@ -2859,9 +2896,10 @@ ShaderBlock* lovrShaderBlockCreate(BlockType type, Buffer* buffer, arr_uniform_t
 
 void lovrShaderBlockDestroy(void* ref) {
   ShaderBlock* block = ref;
-  lovrRelease(Buffer, block->buffer);
+  lovrRelease(block->buffer, lovrBufferDestroy);
   arr_free(&block->uniforms);
   map_free(&block->uniformMap);
+  free(block);
 }
 
 BlockType lovrShaderBlockGetType(ShaderBlock* block) {
@@ -2931,7 +2969,9 @@ Buffer* lovrShaderBlockGetBuffer(ShaderBlock* block) {
 // Mesh
 
 Mesh* lovrMeshCreate(DrawMode mode, Buffer* vertexBuffer, uint32_t vertexCount) {
-  Mesh* mesh = lovrAlloc(Mesh);
+  Mesh* mesh = calloc(1, sizeof(Mesh));
+  lovrAssert(mesh, "Out of memory");
+  mesh->ref = 1;
   mesh->mode = mode;
   mesh->vertexBuffer = vertexBuffer;
   mesh->vertexCount = vertexCount;
@@ -2947,19 +2987,20 @@ void lovrMeshDestroy(void* ref) {
   lovrGraphicsFlushMesh(mesh);
   glDeleteVertexArrays(1, &mesh->vao);
   for (uint32_t i = 0; i < mesh->attributeCount; i++) {
-    lovrRelease(Buffer, mesh->attributes[i].buffer);
+    lovrRelease(mesh->attributes[i].buffer, lovrBufferDestroy);
   }
   map_free(&mesh->attributeMap);
-  lovrRelease(Buffer, mesh->vertexBuffer);
-  lovrRelease(Buffer, mesh->indexBuffer);
-  lovrRelease(Material, mesh->material);
+  lovrRelease(mesh->vertexBuffer, lovrBufferDestroy);
+  lovrRelease(mesh->indexBuffer, lovrBufferDestroy);
+  lovrRelease(mesh->material, lovrMaterialDestroy);
+  free(mesh);
 }
 
 void lovrMeshSetIndexBuffer(Mesh* mesh, Buffer* buffer, uint32_t indexCount, size_t indexSize, size_t offset) {
   if (mesh->indexBuffer != buffer || mesh->indexCount != indexCount || mesh->indexSize != indexSize) {
     lovrGraphicsFlushMesh(mesh);
     lovrRetain(buffer);
-    lovrRelease(Buffer, mesh->indexBuffer);
+    lovrRelease(mesh->indexBuffer, lovrBufferDestroy);
     mesh->indexBuffer = buffer;
     mesh->indexCount = indexCount;
     mesh->indexSize = indexSize;
@@ -3010,7 +3051,7 @@ void lovrMeshDetachAttribute(Mesh* mesh, const char* name) {
   lovrAssert(index != MAP_NIL, "No attached attribute named '%s' was found", name);
   MeshAttribute* attribute = &mesh->attributes[index];
   lovrGraphicsFlushMesh(mesh);
-  lovrRelease(Buffer, attribute->buffer);
+  lovrRelease(attribute->buffer, lovrBufferDestroy);
   map_remove(&mesh->attributeMap, hash);
   mesh->attributeNames[index][0] = '\0';
   memmove(mesh->attributeNames + index, mesh->attributeNames + index + 1, (mesh->attributeCount - index - 1) * MAX_ATTRIBUTE_NAME_LENGTH * sizeof(char));
@@ -3083,6 +3124,6 @@ Material* lovrMeshGetMaterial(Mesh* mesh) {
 
 void lovrMeshSetMaterial(Mesh* mesh, Material* material) {
   lovrRetain(material);
-  lovrRelease(Material, mesh->material);
+  lovrRelease(mesh->material, lovrMaterialDestroy);
   mesh->material = material;
 }

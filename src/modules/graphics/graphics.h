@@ -1,8 +1,6 @@
 #include "graphics/font.h"
 #include "data/modelData.h"
 #include "core/maf.h"
-#include "core/os.h"
-#include "core/util.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -84,6 +82,22 @@ typedef struct {
   unsigned wireframe : 1;
 } Pipeline;
 
+typedef struct {
+  uint32_t width;
+  uint32_t height;
+  bool fullscreen;
+  bool resizable;
+  bool debug;
+  int vsync;
+  int msaa;
+  const char* title;
+  struct {
+    void* data;
+    uint32_t width;
+    uint32_t height;
+  } icon;
+} WindowFlags;
+
 // Base
 bool lovrGraphicsInit(bool debug);
 void lovrGraphicsDestroy(void);
@@ -158,7 +172,6 @@ void lovrGraphicsClear(Color* color, float* depth, int* stencil);
 void lovrGraphicsDiscard(bool color, bool depth, bool stencil);
 void lovrGraphicsPoints(uint32_t count, float** vertices);
 void lovrGraphicsLine(uint32_t count, float** vertices);
-void lovrGraphicsTriangle(DrawStyle style, struct Material* material, uint32_t count, float** vertices);
 void lovrGraphicsPlane(DrawStyle style, struct Material* material, mat4 transform, float u, float v, float w, float h);
 void lovrGraphicsBox(DrawStyle style, struct Material* material, mat4 transform);
 void lovrGraphicsArc(DrawStyle style, ArcMode mode, struct Material* material, mat4 transform, float r1, float r2, int segments);
@@ -214,7 +227,7 @@ typedef struct {
   uint32_t instances;
 } DrawCommand;
 
-void lovrGpuInit(void* (*getProcAddress)(const char*), bool debug);
+void lovrGpuInit(void (*getProcAddress(const char*))(void), bool debug);
 void lovrGpuDestroy(void);
 void lovrGpuClear(struct Canvas* canvas, Color* color, float* depth, int* stencil);
 void lovrGpuCompute(struct Shader* shader, int x, int y, int z);

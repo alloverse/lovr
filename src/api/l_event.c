@@ -1,8 +1,6 @@
 #include "api.h"
 #include "event/event.h"
 #include "thread/thread.h"
-#include "core/os.h"
-#include "core/ref.h"
 #include "core/util.h"
 #include <stdlib.h>
 #include <string.h>
@@ -15,98 +13,10 @@ StringEntry lovrEventType[] = {
   [EVENT_KEYPRESSED] = ENTRY("keypressed"),
   [EVENT_KEYRELEASED] = ENTRY("keyreleased"),
   [EVENT_TEXTINPUT] = ENTRY("textinput"),
-#ifdef LOVR_ENABLE_THREAD
+#ifndef LOVR_DISABLE_THREAD
   [EVENT_THREAD_ERROR] = ENTRY("threaderror"),
 #endif
-  { 0 }
-};
-
-StringEntry lovrKeyboardKey[] = {
-  [KEY_A] = ENTRY("a"),
-  [KEY_B] = ENTRY("b"),
-  [KEY_C] = ENTRY("c"),
-  [KEY_D] = ENTRY("d"),
-  [KEY_E] = ENTRY("e"),
-  [KEY_F] = ENTRY("f"),
-  [KEY_G] = ENTRY("g"),
-  [KEY_H] = ENTRY("h"),
-  [KEY_I] = ENTRY("i"),
-  [KEY_J] = ENTRY("j"),
-  [KEY_K] = ENTRY("k"),
-  [KEY_L] = ENTRY("l"),
-  [KEY_M] = ENTRY("m"),
-  [KEY_N] = ENTRY("n"),
-  [KEY_O] = ENTRY("o"),
-  [KEY_P] = ENTRY("p"),
-  [KEY_Q] = ENTRY("q"),
-  [KEY_R] = ENTRY("r"),
-  [KEY_S] = ENTRY("s"),
-  [KEY_T] = ENTRY("t"),
-  [KEY_U] = ENTRY("u"),
-  [KEY_V] = ENTRY("v"),
-  [KEY_W] = ENTRY("w"),
-  [KEY_X] = ENTRY("x"),
-  [KEY_Y] = ENTRY("y"),
-  [KEY_Z] = ENTRY("z"),
-  [KEY_0] = ENTRY("0"),
-  [KEY_1] = ENTRY("1"),
-  [KEY_2] = ENTRY("2"),
-  [KEY_3] = ENTRY("3"),
-  [KEY_4] = ENTRY("4"),
-  [KEY_5] = ENTRY("5"),
-  [KEY_6] = ENTRY("6"),
-  [KEY_7] = ENTRY("7"),
-  [KEY_8] = ENTRY("8"),
-  [KEY_9] = ENTRY("9"),
-  [KEY_SPACE] = ENTRY("space"),
-  [KEY_ENTER] = ENTRY("return"),
-  [KEY_TAB] = ENTRY("tab"),
-  [KEY_ESCAPE] = ENTRY("escape"),
-  [KEY_BACKSPACE] = ENTRY("backspace"),
-  [KEY_UP] = ENTRY("up"),
-  [KEY_DOWN] = ENTRY("down"),
-  [KEY_LEFT] = ENTRY("left"),
-  [KEY_RIGHT] = ENTRY("right"),
-  [KEY_HOME] = ENTRY("home"),
-  [KEY_END] = ENTRY("end"),
-  [KEY_PAGE_UP] = ENTRY("pageup"),
-  [KEY_PAGE_DOWN] = ENTRY("pagedown"),
-  [KEY_INSERT] = ENTRY("insert"),
-  [KEY_DELETE] = ENTRY("delete"),
-  [KEY_F1] = ENTRY("f1"),
-  [KEY_F2] = ENTRY("f2"),
-  [KEY_F3] = ENTRY("f3"),
-  [KEY_F4] = ENTRY("f4"),
-  [KEY_F5] = ENTRY("f5"),
-  [KEY_F6] = ENTRY("f6"),
-  [KEY_F7] = ENTRY("f7"),
-  [KEY_F8] = ENTRY("f8"),
-  [KEY_F9] = ENTRY("f9"),
-  [KEY_F10] = ENTRY("f10"),
-  [KEY_F11] = ENTRY("f11"),
-  [KEY_F12] = ENTRY("f12"),
-  [KEY_BACKTICK] = ENTRY("`"),
-  [KEY_MINUS] = ENTRY("-"),
-  [KEY_EQUALS] = ENTRY("="),
-  [KEY_LEFT_BRACKET] = ENTRY("["),
-  [KEY_RIGHT_BRACKET] = ENTRY("]"),
-  [KEY_BACKSLASH] = ENTRY("\\"),
-  [KEY_SEMICOLON] = ENTRY(";"),
-  [KEY_APOSTROPHE] = ENTRY("'"),
-  [KEY_COMMA] = ENTRY(","),
-  [KEY_PERIOD] = ENTRY("."),
-  [KEY_SLASH] = ENTRY("/"),
-  [KEY_LEFT_CONTROL] = ENTRY("lctrl"),
-  [KEY_LEFT_SHIFT] = ENTRY("lshift"),
-  [KEY_LEFT_ALT] = ENTRY("lalt"),
-  [KEY_LEFT_OS] = ENTRY("lgui"),
-  [KEY_RIGHT_CONTROL] = ENTRY("rctrl"),
-  [KEY_RIGHT_SHIFT] = ENTRY("rshift"),
-  [KEY_RIGHT_ALT] = ENTRY("ralt"),
-  [KEY_RIGHT_OS] = ENTRY("rgui"),
-  [KEY_CAPS_LOCK] = ENTRY("capslock"),
-  [KEY_SCROLL_LOCK] = ENTRY("scrolllock"),
-  [KEY_NUM_LOCK] = ENTRY("numlock"),
+  [EVENT_PERMISSION] = ENTRY("permission"),
   { 0 }
 };
 
@@ -145,14 +55,11 @@ void luax_checkvariant(lua_State* L, int index, Variant* variant) {
       Proxy* proxy = lua_touserdata(L, index);
       lua_getmetatable(L, index);
 
-      lua_pushliteral(L, "__name");
+      lua_pushliteral(L, "__info");
       lua_rawget(L, -2);
-      variant->value.object.type = (const char*) lua_touserdata(L, -1);
-      lua_pop(L, 1);
-
-      lua_pushliteral(L, "__destructor");
-      lua_rawget(L, -2);
-      variant->value.object.destructor = (void (*)(void*)) lua_tocfunction(L, -1);
+      TypeInfo* info = lua_touserdata(L, -1);
+      variant->value.object.type = info->name;
+      variant->value.object.destructor = info->destructor;
       lua_pop(L, 1);
 
       variant->value.object.pointer = proxy->object;
@@ -220,13 +127,18 @@ static int nextEvent(lua_State* L) {
       lua_pushinteger(L, event.data.text.codepoint);
       return 3;
 
-#ifdef LOVR_ENABLE_THREAD
+#ifndef LOVR_DISABLE_THREAD
     case EVENT_THREAD_ERROR:
       luax_pushtype(L, Thread, event.data.thread.thread);
       lua_pushstring(L, event.data.thread.error);
-      lovrRelease(Thread, event.data.thread.thread);
+      lovrRelease(event.data.thread.thread, lovrThreadDestroy);
       return 3;
 #endif
+
+    case EVENT_PERMISSION:
+      luax_pushenum(L, Permission, event.data.permission.permission);
+      lua_pushboolean(L, event.data.permission.granted);
+      return 3;
 
     case EVENT_CUSTOM:
       for (uint32_t i = 0; i < event.data.custom.count; i++) {

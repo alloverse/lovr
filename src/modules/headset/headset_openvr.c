@@ -3,6 +3,7 @@
 #include "resources/bindings_vive.json.h"
 #include "resources/bindings_knuckles.json.h"
 #include "resources/bindings_touch.json.h"
+#include "resources/bindings_holographic_controller.json.h"
 #include "resources/bindings_vive_tracker_left_elbow.json.h"
 #include "resources/bindings_vive_tracker_right_elbow.json.h"
 #include "resources/bindings_vive_tracker_left_shoulder.json.h"
@@ -15,23 +16,21 @@
 #include "resources/bindings_vive_tracker_right_foot.json.h"
 #include "resources/bindings_vive_tracker_camera.json.h"
 #include "resources/bindings_vive_tracker_keyboard.json.h"
+#include "data/blob.h"
 #include "event/event.h"
 #include "filesystem/filesystem.h"
 #include "graphics/graphics.h"
 #include "graphics/canvas.h"
 #include "graphics/model.h"
+#include "graphics/texture.h"
 #include "core/maf.h"
 #include "core/os.h"
-#include "core/ref.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #undef EXTERN_C
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wtypedef-redefinition"
 #include <openvr_capi.h>
-#pragma clang diagnostic pop
 
 // From openvr_capi.h
 extern intptr_t VR_InitInternal(EVRInitError *peError, EVRApplicationType eType);
@@ -144,6 +143,7 @@ static bool openvr_init(float supersample, float offset, uint32_t msaa) {
       lovrFilesystemWrite("bindings_vive.json", (const char*) src_resources_bindings_vive_json, src_resources_bindings_vive_json_len, false) != src_resources_bindings_vive_json_len ||
       lovrFilesystemWrite("bindings_knuckles.json", (const char*) src_resources_bindings_knuckles_json, src_resources_bindings_knuckles_json_len, false) != src_resources_bindings_knuckles_json_len ||
       lovrFilesystemWrite("bindings_touch.json", (const char*) src_resources_bindings_touch_json, src_resources_bindings_touch_json_len, false) != src_resources_bindings_touch_json_len ||
+      lovrFilesystemWrite("bindings_holographic_controller.json", (const char*) src_resources_bindings_holographic_controller_json, src_resources_bindings_holographic_controller_json_len, false) != src_resources_bindings_holographic_controller_json_len ||
       lovrFilesystemWrite("bindings_vive_tracker_left_elbow.json", (const char*) src_resources_bindings_vive_tracker_left_elbow_json, src_resources_bindings_vive_tracker_left_elbow_json_len, false) != src_resources_bindings_vive_tracker_left_elbow_json_len ||
       lovrFilesystemWrite("bindings_vive_tracker_right_elbow.json", (const char*) src_resources_bindings_vive_tracker_right_elbow_json, src_resources_bindings_vive_tracker_right_elbow_json_len, false) != src_resources_bindings_vive_tracker_right_elbow_json_len ||
       lovrFilesystemWrite("bindings_vive_tracker_left_shoulder.json", (const char*) src_resources_bindings_vive_tracker_left_shoulder_json, src_resources_bindings_vive_tracker_left_shoulder_json_len, false) != src_resources_bindings_vive_tracker_left_shoulder_json_len ||
@@ -255,7 +255,7 @@ static bool openvr_init(float supersample, float offset, uint32_t msaa) {
 }
 
 static void openvr_destroy(void) {
-  lovrRelease(Canvas, state.canvas);
+  lovrRelease(state.canvas, lovrCanvasDestroy);
   VR_ShutdownInternal();
   free(state.mask);
   memset(&state, 0, sizeof(state));
@@ -311,7 +311,7 @@ static double openvr_getDisplayTime(void) {
   float frameDuration = 1.f / frequency;
   float vsyncToPhotons = state.system->GetFloatTrackedDeviceProperty(HEADSET, ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float, NULL);
 
-  return lovrPlatformGetTime() + (double) (frameDuration - secondsSinceVsync + vsyncToPhotons);
+  return os_get_time() + (double) (frameDuration - secondsSinceVsync + vsyncToPhotons);
 }
 
 static uint32_t openvr_getViewCount(void) {
@@ -542,14 +542,14 @@ static bool openvr_vibrate(Device device, float strength, float duration, float 
 static bool loadRenderModel(char* name, RenderModel_t** model, RenderModel_TextureMap_t** texture) {
   loadModel:
   switch (state.renderModels->LoadRenderModel_Async(name, model)) {
-    case EVRRenderModelError_VRRenderModelError_Loading: lovrPlatformSleep(.001); goto loadModel;
+    case EVRRenderModelError_VRRenderModelError_Loading: os_sleep(.001); goto loadModel;
     case EVRRenderModelError_VRRenderModelError_None: break;
     default: return false;
   }
 
   loadTexture:
   switch (state.renderModels->LoadTexture_Async((*model)->diffuseTextureId, texture)) {
-    case EVRRenderModelError_VRRenderModelError_Loading: lovrPlatformSleep(.001); goto loadTexture;
+    case EVRRenderModelError_VRRenderModelError_Loading: os_sleep(.001); goto loadTexture;
     case EVRRenderModelError_VRRenderModelError_None: break;
     default: state.renderModels->FreeRenderModel(*model); return false;
   }
@@ -616,12 +616,14 @@ static ModelData* openvr_newModelData(Device device, bool animated) {
     }
   }
 
-  ModelData* model = lovrAlloc(ModelData);
+  ModelData* model = calloc(1, sizeof(ModelData));
+  lovrAssert(model, "Out of memory");
+  model->ref = 1;
   model->blobCount = 2;
   model->nodeCount = animated ? (1 + modelCount) : 1;
   model->bufferCount = 2 * modelCount;
   model->attributeCount = 4 * modelCount;
-  model->textureCount = modelCount;
+  model->imageCount = modelCount;
   model->materialCount = modelCount;
   model->primitiveCount = modelCount;
   model->childCount = animated ? modelCount : 0;
@@ -697,12 +699,12 @@ static ModelData* openvr_newModelData(Device device, bool animated) {
     };
 
     RenderModel_TextureMap_t* texture = renderModelTextures[i];
-    model->textures[i] = lovrTextureDataCreate(texture->unWidth, texture->unHeight, NULL, 0, FORMAT_RGBA);
-    memcpy(model->textures[i]->blob->data, texture->rubTextureMapData, texture->unWidth * texture->unHeight * 4);
+    model->images[i] = lovrImageCreate(texture->unWidth, texture->unHeight, NULL, 0, FORMAT_RGBA);
+    memcpy(model->images[i]->blob->data, texture->rubTextureMapData, texture->unWidth * texture->unHeight * 4);
 
     model->materials[i] = (ModelMaterial) {
       .colors[COLOR_DIFFUSE] = { 1.f, 1.f, 1.f, 1.f },
-      .textures[TEXTURE_DIFFUSE] = i,
+      .images[TEXTURE_DIFFUSE] = i,
       .filters[TEXTURE_DIFFUSE] = lovrGraphicsGetDefaultFilter()
     };
 
@@ -813,8 +815,8 @@ static void openvr_renderTo(void (*callback)(void*), void* userdata) {
     lovrTextureAllocate(texture, width * 2, height, 1, FORMAT_RGBA);
     lovrTextureSetFilter(texture, lovrGraphicsGetDefaultFilter());
     lovrCanvasSetAttachments(state.canvas, &(Attachment) { texture, 0, 0 }, 1);
-    lovrRelease(Texture, texture);
-    lovrPlatformSetSwapInterval(0);
+    lovrRelease(texture, lovrTextureDestroy);
+    os_window_set_vsync(0);
   }
 
   float head[16];

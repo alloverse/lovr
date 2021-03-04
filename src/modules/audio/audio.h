@@ -4,88 +4,98 @@
 
 #pragma once
 
-#define MAX_MICROPHONES 8
+#define SAMPLE_RATE 48000
+#define BUFFER_SIZE 256
+#define MAX_SOURCES 64
 
-struct AudioStream;
-struct SoundData;
+struct Sound;
 
 typedef struct Source Source;
-typedef struct Microphone Microphone;
 
 typedef enum {
-  SOURCE_STATIC,
-  SOURCE_STREAM
-} SourceType;
+  EFFECT_ABSORPTION,
+  EFFECT_FALLOFF,
+  EFFECT_OCCLUSION,
+  EFFECT_REVERB,
+  EFFECT_SPATIALIZATION,
+  EFFECT_TRANSMISSION
+} Effect;
+
+typedef enum {
+  MATERIAL_GENERIC,
+  MATERIAL_BRICK,
+  MATERIAL_CARPET,
+  MATERIAL_CERAMIC,
+  MATERIAL_CONCRETE,
+  MATERIAL_GLASS,
+  MATERIAL_GRAVEL,
+  MATERIAL_METAL,
+  MATERIAL_PLASTER,
+  MATERIAL_ROCK,
+  MATERIAL_WOOD
+} AudioMaterial;
+
+typedef enum {
+  AUDIO_SHARED,
+  AUDIO_EXCLUSIVE
+} AudioShareMode;
+
+typedef enum {
+  AUDIO_PLAYBACK,
+  AUDIO_CAPTURE
+} AudioType;
 
 typedef enum {
   UNIT_SECONDS,
-  UNIT_SAMPLES
+  UNIT_FRAMES
 } TimeUnit;
 
-bool lovrAudioInit(void);
+typedef enum {
+  SOURCE_NEAREST,
+  SOURCE_BILINEAR
+} SourceInterpolation;
+
+typedef void AudioDeviceCallback(const void* id, size_t size, const char* name, bool isDefault, void* userdata);
+
+bool lovrAudioInit(const char* spatializer);
 void lovrAudioDestroy(void);
-void lovrAudioUpdate(void);
-void lovrAudioAdd(struct Source* source);
-void lovrAudioGetDopplerEffect(float* factor, float* speedOfSound);
-void lovrAudioGetMicrophoneNames(const char* names[MAX_MICROPHONES], uint32_t* count);
-void lovrAudioGetOrientation(float* orientation);
-void lovrAudioGetPosition(float* position);
-void lovrAudioGetVelocity(float* velocity);
+void lovrAudioEnumerateDevices(AudioType type, AudioDeviceCallback* callback, void* userdata);
+bool lovrAudioSetDevice(AudioType type, void* id, size_t size, struct Sound* sink, AudioShareMode shareMode);
+bool lovrAudioStart(AudioType type);
+bool lovrAudioStop(AudioType type);
+bool lovrAudioIsStarted(AudioType type);
 float lovrAudioGetVolume(void);
-bool lovrAudioHas(struct Source* source);
-bool lovrAudioIsSpatialized(void);
-void lovrAudioPause(void);
-void lovrAudioSetDopplerEffect(float factor, float speedOfSound);
-void lovrAudioSetOrientation(float* orientation);
-void lovrAudioSetPosition(float* position);
-void lovrAudioSetVelocity(float* velocity);
 void lovrAudioSetVolume(float volume);
-void lovrAudioStop(void);
+void lovrAudioGetPose(float position[4], float orientation[4]);
+void lovrAudioSetPose(float position[4], float orientation[4]);
+bool lovrAudioSetGeometry(float* vertices, uint32_t* indices, uint32_t vertexCount, uint32_t indexCount, AudioMaterial material);
+const char* lovrAudioGetSpatializer(void);
+void lovrAudioGetAbsorption(float absorption[3]);
+void lovrAudioSetAbsorption(float absorption[3]);
 
-Source* lovrSourceCreateStatic(struct SoundData* soundData);
-Source* lovrSourceCreateStream(struct AudioStream* stream);
+// Source
+
+Source* lovrSourceCreate(struct Sound* sound, bool spatial);
+Source* lovrSourceClone(Source* source);
 void lovrSourceDestroy(void* ref);
-SourceType lovrSourceGetType(Source* source);
-uint32_t lovrSourceGetBitDepth(Source* source);
-uint32_t lovrSourceGetChannelCount(Source* source);
-void lovrSourceGetCone(Source* source, float* innerAngle, float* outerAngle, float* outerGain);
-void lovrSourceGetOrientation(Source* source, float* orientation);
-size_t lovrSourceGetDuration(Source* source);
-void lovrSourceGetFalloff(Source* source, float* reference, float* max, float* rolloff);
-float lovrSourceGetPitch(Source* source);
-void lovrSourceGetPosition(Source* source, float* position);
-void lovrSourceGetVelocity(Source* source, float* velocity);
-uint32_t lovrSourceGetSampleRate(Source* source);
-float lovrSourceGetVolume(Source* source);
-void lovrSourceGetVolumeLimits(Source* source, float* min, float* max);
-bool lovrSourceIsLooping(Source* source);
-bool lovrSourceIsPlaying(Source* source);
-bool lovrSourceIsRelative(Source* source);
+struct Sound* lovrSourceGetSound(Source* source);
+bool lovrSourcePlay(Source* source);
 void lovrSourcePause(Source* source);
-void lovrSourcePlay(Source* source);
-void lovrSourceSeek(Source* source, size_t sample);
-void lovrSourceSetCone(Source* source, float inner, float outer, float outerGain);
-void lovrSourceSetOrientation(Source* source, float* orientation);
-void lovrSourceSetFalloff(Source* source, float reference, float max, float rolloff);
-void lovrSourceSetLooping(Source* source, bool isLooping);
-void lovrSourceSetPitch(Source* source, float pitch);
-void lovrSourceSetPosition(Source* source, float* position);
-void lovrSourceSetRelative(Source* source, bool isRelative);
-void lovrSourceSetVelocity(Source* source, float* velocity);
-void lovrSourceSetVolume(Source* source, float volume);
-void lovrSourceSetVolumeLimits(Source* source, float min, float max);
 void lovrSourceStop(Source* source);
-void lovrSourceStream(Source* source, uint32_t* buffers, size_t count);
-size_t lovrSourceTell(Source* source);
-
-Microphone* lovrMicrophoneCreate(const char* name, size_t samples, uint32_t sampleRate, uint32_t bitDepth, uint32_t channelCount);
-void lovrMicrophoneDestroy(void* ref);
-uint32_t lovrMicrophoneGetBitDepth(Microphone* microphone);
-uint32_t lovrMicrophoneGetChannelCount(Microphone* microphone);
-struct SoundData* lovrMicrophoneGetData(Microphone* microphone, size_t samples, struct SoundData* soundData, size_t offset);
-const char* lovrMicrophoneGetName(Microphone* microphone);
-size_t lovrMicrophoneGetSampleCount(Microphone* microphone);
-uint32_t lovrMicrophoneGetSampleRate(Microphone* microphone);
-bool lovrMicrophoneIsRecording(Microphone* microphone);
-void lovrMicrophoneStartRecording(Microphone* microphone);
-void lovrMicrophoneStopRecording(Microphone* microphone);
+bool lovrSourceIsPlaying(Source* source);
+bool lovrSourceIsLooping(Source* source);
+void lovrSourceSetLooping(Source* source, bool loop);
+float lovrSourceGetVolume(Source* source);
+void lovrSourceSetVolume(Source* source, float volume);
+void lovrSourceSeek(Source* source, double time, TimeUnit units);
+double lovrSourceTell(Source* source, TimeUnit units);
+double lovrSourceGetDuration(Source* source, TimeUnit units);
+bool lovrSourceIsSpatial(Source* source);
+void lovrSourceGetPose(Source* source, float position[4], float orientation[4]);
+void lovrSourceSetPose(Source* source, float position[4], float orientation[4]);
+float lovrSourceGetRadius(Source* source);
+void lovrSourceSetRadius(Source* source, float radius);
+void lovrSourceGetDirectivity(Source* source, float* weight, float* power);
+void lovrSourceSetDirectivity(Source* source, float weight, float power);
+bool lovrSourceIsEffectEnabled(Source* source, Effect effect);
+void lovrSourceSetEffectEnabled(Source* Source, Effect effect, bool enabled);

@@ -1,7 +1,6 @@
 #include "math.h"
 #include "math/randomGenerator.h"
 #include "core/maf.h"
-#include "core/ref.h"
 #include "core/util.h"
 #include "lib/noise1234/noise1234.h"
 #include <math.h>
@@ -24,7 +23,7 @@ bool lovrMathInit() {
 
 void lovrMathDestroy() {
   if (!state.initialized) return;
-  lovrRelease(RandomGenerator, state.generator);
+  lovrRelease(state.generator, lovrRandomGeneratorDestroy);
   memset(&state, 0, sizeof(state));
 }
 

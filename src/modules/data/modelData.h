@@ -8,8 +8,8 @@
 
 #define MAX_BONES 48
 
-struct TextureData;
 struct Blob;
+struct Image;
 
 typedef enum {
   ATTR_POSITION,
@@ -142,7 +142,7 @@ typedef struct {
   const char* name;
   float scalars[MAX_MATERIAL_SCALARS];
   Color colors[MAX_MATERIAL_COLORS];
-  uint32_t textures[MAX_MATERIAL_TEXTURES];
+  uint32_t images[MAX_MATERIAL_TEXTURES];
   TextureFilter filters[MAX_MATERIAL_TEXTURES];
   TextureWrap wraps[MAX_MATERIAL_TEXTURES];
 } ModelMaterial;
@@ -179,10 +179,11 @@ typedef struct {
 } ModelSkin;
 
 typedef struct ModelData {
+  uint32_t ref;
   void* data;
   struct Blob** blobs;
   ModelBuffer* buffers;
-  struct TextureData** textures;
+  struct Image** images;
   ModelMaterial* materials;
   ModelAttribute* attributes;
   ModelPrimitive* primitives;
@@ -193,7 +194,7 @@ typedef struct ModelData {
 
   uint32_t blobCount;
   uint32_t bufferCount;
-  uint32_t textureCount;
+  uint32_t imageCount;
   uint32_t materialCount;
   uint32_t attributeCount;
   uint32_t primitiveCount;
@@ -217,9 +218,9 @@ typedef struct ModelData {
 
 typedef void* ModelDataIO(const char* filename, size_t* bytesRead);
 
-ModelData* lovrModelDataInit(ModelData* model, struct Blob* blob, ModelDataIO* io);
-#define lovrModelDataCreate(...) lovrModelDataInit(lovrAlloc(ModelData), __VA_ARGS__)
+ModelData* lovrModelDataCreate(struct Blob* blob, ModelDataIO* io);
 ModelData* lovrModelDataInitGltf(ModelData* model, struct Blob* blob, ModelDataIO* io);
 ModelData* lovrModelDataInitObj(ModelData* model, struct Blob* blob, ModelDataIO* io);
+ModelData* lovrModelDataInitStl(ModelData* model, struct Blob* blob, ModelDataIO* io);
 void lovrModelDataDestroy(void* ref);
 void lovrModelDataAllocate(ModelData* model);

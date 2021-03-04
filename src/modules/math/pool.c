@@ -10,7 +10,18 @@ static const size_t vectorComponents[] = {
   [V_MAT4] = 16
 };
 
-Pool* lovrPoolInit(Pool* pool) {
+struct Pool {
+  uint32_t ref;
+  float* data;
+  size_t count;
+  size_t cursor;
+  size_t generation;
+};
+
+Pool* lovrPoolCreate() {
+  Pool* pool = calloc(1, sizeof(Pool));
+  lovrAssert(pool, "Out of memory");
+  pool->ref = 1;
   lovrPoolGrow(pool, 1 << 12);
   return pool;
 }
@@ -18,6 +29,7 @@ Pool* lovrPoolInit(Pool* pool) {
 void lovrPoolDestroy(void* ref) {
   Pool* pool = ref;
   free(pool->data);
+  free(pool);
 }
 
 void lovrPoolGrow(Pool* pool, size_t count) {

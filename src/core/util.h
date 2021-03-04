@@ -10,24 +10,14 @@
 #define LOVR_VERSION_ALIAS "Maximum Moss"
 
 #ifdef _WIN32
- #if defined(LOVR_BUILDING_SHARED)
-  #define LOVR_EXPORT __declspec(dllexport)
- #elif defined(LOVR_BUILDING_EXE)
-  #define LOVR_EXPORT
- #else
-  #define LOVR_EXPORT __declspec(dllimport)
- #endif
 #define LOVR_NORETURN __declspec(noreturn)
 #define LOVR_THREAD_LOCAL __declspec(thread)
 #define LOVR_ALIGN(n) __declspec(align(n))
-#define LOVR_INLINE __inline
 #define LOVR_RESTRICT __restrict
 #else
-#define LOVR_EXPORT __attribute__((visibility("default")))
 #define LOVR_NORETURN __attribute__((noreturn))
 #define LOVR_THREAD_LOCAL __thread
 #define LOVR_ALIGN(n) __attribute__((aligned(n)))
-#define LOVR_INLINE inline
 #define LOVR_RESTRICT restrict
 #endif
 
@@ -58,7 +48,7 @@ void lovrSetLogCallback(logFn* callback, void* userdata);
 void lovrLog(int level, const char* tag, const char* format, ...);
 
 // Hash function (FNV1a)
-static LOVR_INLINE uint64_t hash64(const void* data, size_t length) {
+static inline uint64_t hash64(const void* data, size_t length) {
   const uint8_t* bytes = (const uint8_t*) data;
   uint64_t hash = 0xcbf29ce484222325;
   for (size_t i = 0; i < length; i++) {
@@ -66,3 +56,32 @@ static LOVR_INLINE uint64_t hash64(const void* data, size_t length) {
   }
   return hash;
 }
+
+// Refcounting
+void lovrRetain(void* ref);
+void lovrRelease(void* ref, void (*destructor)(void*));
+
+// Dynamic Array
+typedef void* arr_allocator(void* data, size_t size);
+#define arr_t(T) struct { T* data; arr_allocator* alloc; size_t length, capacity; }
+#define arr_init(a, allocator) (a)->data = NULL, (a)->length = 0, (a)->capacity = 0, (a)->alloc = allocator
+#define arr_free(a) if ((a)->data) (a)->alloc((a)->data, 0)
+#define arr_reserve(a, n) _arr_reserve((void**) &((a)->data), n, &(a)->capacity, sizeof(*(a)->data), (a)->alloc)
+#define arr_expand(a, n) arr_reserve(a, (a)->length + n)
+#define arr_push(a, x) arr_reserve(a, (a)->length + 1), (a)->data[(a)->length++] = x
+#define arr_pop(a) (a)->data[--(a)->length]
+#define arr_append(a, p, n) arr_reserve(a, (a)->length + n), memcpy((a)->data + (a)->length, p, n * sizeof(*(p))), (a)->length += n
+#define arr_splice(a, i, n) memmove((a)->data + (i), (a)->data + ((i) + n), ((a)->length - (i) - (n)) * sizeof(*(a)->data)), (a)->length -= n
+#define arr_clear(a) (a)->length = 0
+
+static inline void _arr_reserve(void** data, size_t n, size_t* capacity, size_t stride, arr_allocator* allocator) {
+  if (*capacity >= n) return;
+  if (*capacity == 0) *capacity = 1;
+  while (*capacity < n) *capacity *= 2;
+  *data = allocator(*data, *capacity * stride);
+  lovrAssert(*data, "Out of memory");
+}
+
+// UTF-8
+size_t utf8_decode(const char *s, const char *e, unsigned *pch);
+void utf8_encode(uint32_t codepoint, char str[4]);

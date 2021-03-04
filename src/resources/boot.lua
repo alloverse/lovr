@@ -36,7 +36,7 @@ local function nogame()
         }
         uv.x -= clamp(uv.x, -2., 0.);
         float sdf = -length(uv) * sign(uv.y) - .5;
-        float w = fwidth(sdf);
+        float w = fwidth(sdf) * .5;
         float alpha = smoothstep(.22 + w, .22 - w, sdf);
         vec3 color = mix(vec3(.094, .662, .890), vec3(.913, .275, .6), clamp(y * 1.5 - .25, 0., 1.));
         color = mix(color, vec3(.2, .2, .24), smoothstep(-.12 + w, -.12 - w, sdf));
@@ -109,8 +109,13 @@ function lovr.boot()
       headset = true,
       math = true,
       physics = true,
+      system = true,
       thread = true,
       timer = true
+    },
+    audio = {
+      start = true,
+      spatializer = 'simple'
     },
     graphics = {
       debug = false
@@ -173,46 +178,36 @@ function lovr.boot()
 end
 
 function lovr.run()
-  lovr.timer.step()
+  local dt = 0
+  if lovr.timer then lovr.timer.step() end
   if lovr.load then lovr.load(arg) end
   return function()
-    lovr.event.pump()
-    for name, a, b, c, d in lovr.event.poll() do
-      if name == 'restart' then
-        local cookie = lovr.restart and lovr.restart()
-        return 'restart', cookie
-      elseif name == 'quit' and (not lovr.quit or not lovr.quit(a)) then
-        return a or 0
-      end
-      if lovr.handlers[name] then lovr.handlers[name](a, b, c, d) end
-    end
-    local dt = lovr.timer.step()
-    if lovr.headset then
-      lovr.headset.update(dt)
-    end
-    if lovr.audio then
-      lovr.audio.update()
-      if lovr.headset then
-        lovr.audio.setPose(lovr.headset.getPose())
-        lovr.audio.setVelocity(lovr.headset.getVelocity())
+    if lovr.event then
+      lovr.event.pump()
+      for name, a, b, c, d in lovr.event.poll() do
+        if name == 'restart' then
+          local cookie = lovr.restart and lovr.restart()
+          return 'restart', cookie
+        elseif name == 'quit' and (not lovr.quit or not lovr.quit(a)) then
+          return a or 0
+        end
+        if lovr.handlers[name] then lovr.handlers[name](a, b, c, d) end
       end
     end
+    if lovr.timer then dt = lovr.timer.step() end
+    if lovr.headset then lovr.headset.update(dt) end
     if lovr.update then lovr.update(dt) end
     if lovr.graphics then
       lovr.graphics.origin()
-      if lovr.draw then
-        if lovr.headset then
-          lovr.headset.renderTo(lovr.draw)
-        end
-        if lovr.graphics.hasWindow() then
-          lovr.mirror()
-        end
+      if lovr.headset then
+        lovr.headset.renderTo(lovr.draw)
+      end
+      if lovr.graphics.hasWindow() then
+        lovr.mirror()
       end
       lovr.graphics.present()
     end
-    if lovr.math then
-      lovr.math.drain()
-    end
+    if lovr.math then lovr.math.drain() end
   end
 end
 
@@ -231,7 +226,9 @@ function lovr.mirror()
     lovr.graphics.setBlendMode(blend, alpha)
   else
     lovr.graphics.clear()
-    lovr.draw()
+    if lovr.draw then
+      lovr.draw()
+    end
   end
 end
 

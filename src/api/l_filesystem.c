@@ -3,7 +3,7 @@
 #include "data/blob.h"
 #include "core/fs.h"
 #include "core/os.h"
-#include "core/ref.h"
+#include "core/util.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -74,10 +74,19 @@ static int luax_loadfile(lua_State* L, const char* path, const char* debug) {
 }
 
 static int l_lovrFilesystemAppend(lua_State* L) {
-  size_t size;
   const char* path = luaL_checkstring(L, 1);
-  const char* content = luaL_checklstring(L, 2, &size);
-  lua_pushnumber(L, lovrFilesystemWrite(path, content, size, true));
+  size_t size;
+  const char* data;
+  Blob* blob = luax_totype(L, 2, Blob);
+  if (blob) {
+    data = blob->data;
+    size = blob->size;
+  } else if (lua_type(L, 2) == LUA_TSTRING) {
+    data = lua_tolstring(L, 2, &size);
+  } else {
+    return luax_typeerror(L, 2, "string or Blob");
+  }
+  lua_pushinteger(L, lovrFilesystemWrite(path, data, size, true));
   return 1;
 }
 
@@ -168,8 +177,7 @@ static int l_lovrFilesystemGetRealDirectory(lua_State* L) {
 
 static int l_lovrFilesystemGetRequirePath(lua_State* L) {
   lua_pushstring(L, lovrFilesystemGetRequirePath());
-  lua_pushstring(L, lovrFilesystemGetCRequirePath());
-  return 2;
+  return 1;
 }
 
 static int l_lovrFilesystemGetSaveDirectory(lua_State* L) {
@@ -263,7 +271,7 @@ static int l_lovrFilesystemNewBlob(lua_State* L) {
   lovrAssert(data, "Could not load file '%s'", path);
   Blob* blob = lovrBlobCreate(data, size, path);
   luax_pushtype(L, Blob, blob);
-  lovrRelease(Blob, blob);
+  lovrRelease(blob, lovrBlobDestroy);
   return 1;
 }
 
@@ -297,8 +305,7 @@ static int l_lovrFilesystemSetIdentity(lua_State* L) {
 }
 
 static int l_lovrFilesystemSetRequirePath(lua_State* L) {
-  if (lua_type(L, 1) == LUA_TSTRING) lovrFilesystemSetRequirePath(lua_tostring(L, 1));
-  if (lua_type(L, 2) == LUA_TSTRING) lovrFilesystemSetCRequirePath(lua_tostring(L, 2));
+  lovrFilesystemSetRequirePath(luaL_checkstring(L, 1));
   return 0;
 }
 
@@ -309,10 +316,19 @@ static int l_lovrFilesystemUnmount(lua_State* L) {
 }
 
 static int l_lovrFilesystemWrite(lua_State* L) {
-  size_t size;
   const char* path = luaL_checkstring(L, 1);
-  const char* content = luaL_checklstring(L, 2, &size);
-  lua_pushnumber(L, lovrFilesystemWrite(path, content, size, false));
+  size_t size;
+  const char* data;
+  Blob* blob = luax_totype(L, 2, Blob);
+  if (blob) {
+    data = blob->data;
+    size = blob->size;
+  } else if (lua_type(L, 2) == LUA_TSTRING) {
+    data = lua_tolstring(L, 2, &size);
+  } else {
+    return luax_typeerror(L, 2, "string or Blob");
+  }
+  lua_pushinteger(L, lovrFilesystemWrite(path, data, size, false));
   return 1;
 }
 
@@ -403,90 +419,82 @@ static int libLoader(lua_State* L) {
   const char* module = lua_tostring(L, 1);
   const char* hyphen = strchr(module, '-');
   const char* symbol = hyphen ? hyphen + 1 : module;
-  const char* p = lovrFilesystemGetCRequirePath();
 
-  char filename[1024];
-  char* f = filename;
-  size_t n = sizeof(filename);
+  char path[1024];
 
-  lua_getglobal(L, "package");
-  while (1) {
-    if (*p == ';' || *p == '\0') {
-      *f = '\0';
+  // On Android, load libraries directly from the apk by passing a path like this to the linker:
+  //   /path/to/app.apk!/lib/arm64-v8a/lib.so
+  // On desktop systems, look for libraries next to the executable
+#ifdef __ANDROID__
+  const char* source = lovrFilesystemGetSource();
+  size_t length = strlen(source);
+  memcpy(path, source, length);
 
-      if (lovrFilesystemIsFile(filename)) {
-        lua_getfield(L, -1, "loadlib");
-
-        // Synthesize the absolute path to the library on disk
-        luaL_Buffer buffer;
-        luaL_buffinit(L, &buffer);
-        luaL_addstring(&buffer, lovrFilesystemGetRealDirectory(filename));
-        luaL_addchar(&buffer, LOVR_PATH_SEP);
-        luaL_addstring(&buffer, filename);
-        luaL_pushresult(&buffer);
-
-        // Synthesize the symbol to load: luaopen_ followed by the module name with dots converted
-        // to underscores, starting after the first hyphen (if there is one).
-        luaL_buffinit(L, &buffer);
-        luaL_addstring(&buffer, "luaopen_");
-        for (const char* s = symbol; *s; s++) {
-          luaL_addchar(&buffer, *s == '.' ? '_' : *s);
-        }
-        luaL_pushresult(&buffer);
-
-        // Finally call package.loadlib with the library path and symbol name
-        lua_call(L, 2, 1);
-        return 1;
-      }
-
-      if (*p == '\0') {
-        break;
-      } else {
-        p++;
-        f = filename;
-        n = sizeof(filename);
-      }
-    } else if (*p == '?') {
-      for (const char* m = module; n && *m; n--, m++) {
-        *f++ = *m == '.' ? LOVR_PATH_SEP : *m;
-      }
-      p++;
-
-      if (*p == '?') {
-        for (const char* e = extension; n && *e; n--, e++) {
-          *f++ = *e;
-        }
-        p++;
-      }
-    } else {
-      *f++ = *p++;
-      n--;
-    }
-
-    lovrAssert(n > 0, "Tried to require a filename that was too long (%s)", module);
+  const char* subpath = "!/lib/arm64-v8a/";
+  size_t subpathLength = strlen(subpath);
+  char* p = path + length;
+  if (length + subpathLength >= sizeof(path)) {
+    return 0;
   }
 
-  return 0;
+  memcpy(p, subpath, subpathLength);
+  length += subpathLength;
+  p += subpathLength;
+#else
+  size_t length = lovrFilesystemGetExecutablePath(path, sizeof(path));
+  if (length == 0) {
+    return 0;
+  }
+
+  char* slash = strrchr(path, LOVR_PATH_SEP);
+  char* p = slash ? slash + 1 : path;
+  length = p - path;
+#endif
+
+  for (const char* m = module; *m && length < sizeof(path); m++, length++) {
+    *p++ = *m == '.' ? LOVR_PATH_SEP : *m;
+  }
+
+  for (const char* e = extension; *e && length < sizeof(path); e++, length++) {
+    *p++ = *e;
+  }
+
+  if (length >= sizeof(path)) {
+    return 0;
+  }
+
+  *p = '\0';
+
+  lua_getglobal(L, "package");
+  lua_getfield(L, -1, "loadlib");
+  lua_pushlstring(L, path, length);
+
+  // Synthesize luaopen_<module> symbol
+  luaL_Buffer buffer;
+  luaL_buffinit(L, &buffer);
+  luaL_addstring(&buffer, "luaopen_");
+  for (const char* s = symbol; *s; s++) {
+    luaL_addchar(&buffer, *s == '.' ? '_' : *s);
+  }
+  luaL_pushresult(&buffer);
+
+  lua_call(L, 2, 1);
+  return 1;
 }
 
 int luaopen_lovr_filesystem(lua_State* L) {
+  const char* archive = NULL;
+
   lua_getglobal(L, "arg");
   if (lua_istable(L, -1)) {
-    lua_getfield(L, -1, "exe");
-    const char* argExe = lua_tostring(L, -1);
-    lua_rawgeti(L, -2, 0);
-    const char* argGame = lua_tostring(L, -1);
-    lua_getfield(L, -3, "root");
-    const char* argRoot = luaL_optstring(L, -1, NULL);
-    if (lovrFilesystemInit(argExe, argGame, argRoot)) {
-      luax_atexit(L, lovrFilesystemDestroy);
-    }
-    lua_pop(L, 4);
-  } else {
+    lua_rawgeti(L, -1, 0);
+    archive = lua_tostring(L, -1);
     lua_pop(L, 1);
-    if (lovrFilesystemInit(NULL, NULL, NULL)) {
-      luax_atexit(L, lovrFilesystemDestroy);
-    }
+  }
+  lua_pop(L, 1);
+
+  if (lovrFilesystemInit(archive)) {
+    luax_atexit(L, lovrFilesystemDestroy);
   }
 
   lua_newtable(L);

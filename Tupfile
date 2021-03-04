@@ -3,20 +3,18 @@ include_rules
 # core
 ifneq (@(PICO),y)
 SRC += src/main.c
-endif
-SRC += src/core/arr.c
-SRC += src/core/fs.c
-SRC += src/core/map.c
-ifneq (@(PICO),y)
 SRC += src/core/os_$(PLATFORM).c
 endif
-SRC += src/core/ref.c
-SRC += src/core/utf.c
 SRC += src/core/util.c
+SRC += src/core/fs.c
+SRC += src/core/map.c
 SRC += src/core/zip.c
 
 # modules
-SRC_@(AUDIO) += src/modules/audio/*.c
+SRC_@(AUDIO) += src/modules/audio/audio.c
+SRC_@(AUDIO) += src/modules/audio/spatializer_simple.c
+SRC_@(AUDIO)@(STEAM_AUDIO) += src/modules/audio/spatializer_phonon.c
+SRC_@(AUDIO)@(OCULUS_AUDIO) += src/modules/audio/spatializer_oculus.c
 SRC_@(DATA) += src/modules/data/*.c
 SRC_@(EVENT) += src/modules/event/*.c
 SRC_@(FILESYSTEM) += src/modules/filesystem/*.c
@@ -31,13 +29,16 @@ SRC_@(HEADSET)@(PICO) += src/modules/headset/headset_pico.c
 SRC_@(HEADSET)@(WEBXR) += src/modules/headset/headset_webxr.c
 SRC_@(MATH) += src/modules/math/*.c
 SRC_@(PHYSICS) += src/modules/physics/*.c
+SRC_@(SYSTEM) += src/modules/system/*.c
 SRC_@(THREAD) += src/modules/thread/*.c
 SRC_@(TIMER) += src/modules/timer/*.c
 
 # lib
 SRC += src/lib/stb/*.c
 SRC_@(DATA) += src/lib/jsmn/jsmn.c
+SRC_@(DATA) += src/lib/minimp3/minimp3.c
 SRC_@(GRAPHICS) += src/lib/glad/glad.c
+SRC_@(AUDIO)@(DATA) += src/lib/miniaudio/miniaudio.c
 SRC_@(MATH) += src/lib/noise1234/noise1234.c
 SRC_@(THREAD) += src/lib/tinycthread/tinycthread.c
 
@@ -52,10 +53,9 @@ SRC_@(GRAPHICS) += src/api/l_graphics*.c
 SRC_@(HEADSET) += src/api/l_headset*.c
 SRC_@(MATH) += src/api/l_math*.c
 SRC_@(PHYSICS) += src/api/l_physics*.c
+SRC_@(SYSTEM) += src/api/l_system*.c
 SRC_@(THREAD) += src/api/l_thread*.c
 SRC_@(TIMER) += src/api/l_timer*.c
-SRC_@(JSON) += src/lib/lua-cjson/*.c
-SRC_@(ENET) += src/lib/lua-enet/*.c
 
 # resources
 RES += src/resources/boot.lua
@@ -70,25 +70,29 @@ SRC_@(GRAPHICS) += src/resources/shaders.c
 # 4 [CP] copy external libs -> libs folder
 : foreach $(RES) $(RES_y) |> !xd |> %f.h
 : foreach $(SRC) $(SRC_y) $(SRC_yy) | src/resources/*.h |> !cc |> .obj/%B.o
-: .obj/*.o |> !ld |> $(PREFIX)lovr$(SUFFIX) | $(EXTRAS) $(EXTRAS_y)
+: .obj/*.o |> !ld |> bin/$(PREFIX)lovr$(SUFFIX) | $(EXTRAS) $(EXTRAS_y)
 : foreach $(LIBS) |> !cp |> $(LIB)/%b
 
-# Android
+# APK
 ifeq ($(PLATFORM),android)
-  # There needs to be a Java class for the activity with 2 lines of code to load native libraries.
-  # It gets compiled to a class file with javac and then into bytecode using dx
+  JAVA = src/resources/Activity.java
   CLASS = org/lovr/app/Activity.class
-  : src/resources/$(ACTIVITY_y).java |> !cp |> src/resources/Activity.java
-  : src/resources/Activity.java |> ^ JAVAC %b^ javac -classpath $(CLASSPATH) -d . %f |> $(CLASS)
-  : $(CLASS) $(EXTRA_JARS) |> !dx |> classes.dex
+  JAR = bin/lovr.jar
+  DEX = bin/apk/classes.dex
+  MANIFEST = bin/AndroidManifest.xml
 
-  # Create an apk from the Android manifest.  The zip command is used afterwards to add raw files
-  # because it is way faster than calling aapt again and apks are just zips (TODO windows).
-  : $(ANDROID_MANIFEST_y) |> !cp |> src/resources/AndroidManifest.xml
-  : src/resources/AndroidManifest.xml | $(LIB)/*.so classes.dex |> ^ AAPT %b^ aapt package -F %o -M %f -I $(ANDROID_JAR) $(ANDROID_ASSETS) && zip -qu0 %o $(LIB)/*.so classes.dex |> tmp/lovr.unaligned.apk
+  : src/resources/$(ACTIVITY_y).java |> !cp |> $(JAVA)
+  : $(ANDROID_MANIFEST_y) |> !cp |> $(MANIFEST)
 
-  # Even though we have an apk, it isn't actually valid yet.  It has to be aligned using the special
-  # zipalign tool, and then signed using apksigner.
-  : tmp/lovr.unaligned.apk |> !zipalign |> tmp/lovr.unsigned.apk
-  : tmp/lovr.unsigned.apk |> !apksigner |> lovr.apk
+  # java -> class -> jar -> dex
+  : $(JAVA) |> ^ JAVAC %b^ javac -classpath $(CLASSPATH) -d bin %f |> bin/$(CLASS)
+  : bin/$(CLASS) |> ^ JAR %b^ jar -cf %o -C bin $(CLASS) |> $(JAR)
+  : $(JAR) $(EXTRA_JARS) |> !dx |> $(DEX)
+
+  # aapt
+  : $(MANIFEST) | $(LIB)/*.so $(DEX) |> ^ AAPT %b^ aapt package $(PACKAGE_RENAME) -F %o -M %f -0 so -I $(ANDROID_JAR) $(ANDROID_ASSETS) bin/apk |> bin/.lovr.unaligned.apk
+
+  # align n sign
+  : bin/.lovr.unaligned.apk |> !zipalign |> bin/.lovr.unsigned.apk
+  : bin/.lovr.unsigned.apk |> !apksigner |> bin/lovr.apk
 endif

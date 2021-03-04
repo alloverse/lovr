@@ -1,8 +1,6 @@
 #include "thread/thread.h"
 #include "thread/channel.h"
-#include "core/arr.h"
 #include "core/map.h"
-#include "core/ref.h"
 #include "core/util.h"
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +28,7 @@ void lovrThreadModuleDestroy() {
   for (size_t i = 0; i < state.channels.size; i++) {
     if (state.channels.values[i] != MAP_NIL) {
       ChannelEntry entry = { state.channels.values[i] };
-      lovrRelease(Channel, entry.channel);
+      lovrRelease(entry.channel, lovrChannelDestroy);
     }
   }
   mtx_destroy(&state.channelLock);
@@ -53,11 +51,14 @@ Channel* lovrThreadGetChannel(const char* name) {
   return entry.channel;
 }
 
-Thread* lovrThreadInit(Thread* thread, int (*runner)(void*), Blob* body) {
-  lovrRetain(body);
+Thread* lovrThreadCreate(int (*runner)(void*), Blob* body) {
+  Thread* thread = calloc(1, sizeof(Thread));
+  lovrAssert(thread, "Out of memory");
+  thread->ref = 1;
   thread->runner = runner;
   thread->body = body;
   mtx_init(&thread->lock, mtx_plain);
+  lovrRetain(body);
   return thread;
 }
 
@@ -65,8 +66,9 @@ void lovrThreadDestroy(void* ref) {
   Thread* thread = ref;
   mtx_destroy(&thread->lock);
   thrd_detach(thread->handle);
-  lovrRelease(Blob, thread->body);
+  lovrRelease(thread->body, lovrBlobDestroy);
   free(thread->error);
+  free(thread);
 }
 
 void lovrThreadStart(Thread* thread, Variant* arguments, uint32_t argumentCount) {
@@ -78,7 +80,7 @@ void lovrThreadStart(Thread* thread, Variant* arguments, uint32_t argumentCount)
 
   free(thread->error);
   thread->error = NULL;
-  lovrAssert(argumentCount <= MAX_THREAD_ARGUMENTS, "Too many Thread arguments (max is %d)\n", MAX_THREAD_ARGUMENTS);
+  lovrAssert(argumentCount <= MAX_THREAD_ARGUMENTS, "Too many Thread arguments (max is %d)", MAX_THREAD_ARGUMENTS);
   thread->argumentCount = argumentCount;
   memcpy(thread->arguments, arguments, argumentCount * sizeof(Variant));
   if (thrd_create(&thread->handle, thread->runner, thread) != thrd_success) {

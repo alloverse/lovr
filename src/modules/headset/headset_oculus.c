@@ -3,10 +3,8 @@
 #include "graphics/graphics.h"
 #include "graphics/canvas.h"
 #include "graphics/texture.h"
-#include "core/arr.h"
 #include "core/maf.h"
 #include "core/map.h"
-#include "core/ref.h"
 #include <OVR_CAPI.h>
 #include <OVR_CAPI_GL.h>
 #include <stdlib.h>
@@ -112,7 +110,7 @@ static bool oculus_init(float supersample, float offset, uint32_t msaa) {
 
 static void oculus_destroy(void) {
   for (size_t i = 0; i < state.textures.length; i++) {
-    lovrRelease(Texture, state.textures.data[i]);
+    lovrRelease(state.textures.data[i], lovrTextureDestroy);
   }
   map_free(&state.textureLookup);
 
@@ -126,7 +124,7 @@ static void oculus_destroy(void) {
     state.chain = NULL;
   }
 
-  lovrRelease(Canvas, state.canvas);
+  lovrRelease(state.canvas, lovrCanvasDestroy);
   ovr_Destroy(state.session);
   ovr_Shutdown();
   memset(&state, 0, sizeof(state));
@@ -353,7 +351,7 @@ static void oculus_renderTo(void (*callback)(void*), void* userdata) {
     CanvasFlags flags = { .depth = { .enabled = true, .format = FORMAT_D24S8 }, .stereo = true };
     state.canvas = lovrCanvasCreate(state.size.w, state.size.h, flags);
 
-    lovrPlatformSetSwapInterval(0);
+    os_window_set_vsync(0);
   }
 
   ovrPosef EyeRenderPose[2];
